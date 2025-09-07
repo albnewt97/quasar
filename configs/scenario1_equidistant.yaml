@@ -1,0 +1,32 @@
+scenario:
+id: "1a"
+name: "Static equidistant fiber"
+
+nodes:
+- {name: Alice, role: sender}
+- {name: Charlie, role: bsm}
+- {name: Bob, role: sender}
+
+channels:
+quantum:
+- {src: Alice, dst: Charlie, type: fiber, distance_km: 10.0, attenuation_db_per_km: 0.2}
+- {src: Bob, dst: Charlie, type: fiber, distance_km: 10.0, attenuation_db_per_km: 0.2}
+classical:
+- {src: Charlie, dst: Alice, distance_km: 10.0}
+- {src: Charlie, dst: Bob, distance_km: 10.0}
+
+physics:
+detector:
+model: AfterpulseSPD
+params: {efficiency: 0.8, dark_count: 1e-6, dead_time_ns: 60}
+bsm:
+model: TimeBinPartialOverlap
+params: {visibility_base: 0.98, coincidence_window_ps: 500}
+channel:
+model: FiberRamanDispersionPMD
+params: {beta2_ps2_per_km: 17.0, pmd_ps_per_sqrt_km: 0.1}
+
+run:
+stop_time_ps: 1_000_000_000
+output_dir: data/runs/scenario1a
+seed: 42
