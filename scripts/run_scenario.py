@@ -1,39 +1,111 @@
 #!/usr/bin/env python3
 """
-Run a QUASAR scenario from a YAML config.
+Run a QUASAR scenario from a YAML config
+=======================================
+
+Usage
+-----
+python scripts/run_scenario.py configs/scenario1_equidistant.yaml
+
+This script:
+1. Loads and validates the YAML config using `configs.schema.Config`.
+2. Dispatches to the appropriate scenario class.
+3. Runs the simulation and writes results to the configured output_dir.
 """
+
+from __future__ import annotations
+
 import argparse
-import pathlib
 import sys
-import yaml
+from pathlib import Path
 
-# Ensure local packages are importable when invoked from repo root
-REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO_ROOT))
+from configs.schema import load_config, Config
+from sequence_ext.io.logging import logger, reconfigure_logging
+from sequence_ext import (
+    Scenario1Equidistant,
+    Scenario1Uneven,
+    Scenario2Moving,
+    Scenario3City,
+    Scenario4UKOpt,
+)
 
-from sequence_ext.scenarios.scenario1_static import Scenario1Static # noqa: E402
+
+# -----------------------------------------------------------------------------
+# Dispatcher
+# -----------------------------------------------------------------------------
+def _run_from_config(cfg: Config) -> Path:
+    s = cfg.scenario
+
+    if s.name == "scenario1_equidistant":
+        sc = Scenario1Equidistant(
+            pulse_rate_hz=s.pulse_rate_hz,
+            duration_s=s.duration_s,
+            output_dir=s.output_dir,
+        )
+    elif s.name == "scenario1_uneven":
+        sc = Scenario1Uneven(
+            pulse_rate_hz=s.pulse_rate_hz,
+            duration_s=s.duration_s,
+            output_dir=s.output_dir,
+        )
+    elif s.name == "scenario2_moving":
+        # Weather may be a preset string or inline object
+        weather = None
+        if isinstance(cfg.weather, str):
+            weather = cfg.weather
+        elif isinstance(cfg.weather, dict) and "attenuation_db_per_km" in cfg.weather:
+            weather = "custom"  # scenario2_moving expects a preset key
+        sc = Scenario2Moving(
+            pulse_rate_hz=s.pulse_rate_hz,
+            duration_s=s.duration_s,
+            output_dir=s.output_dir,
+            weather=weather or "clear",
+        )
+    elif s.name == "scenario3_city":
+        sc = Scenario3City(
+            pulse_rate_hz=s.pulse_rate_hz,
+            duration_s=s.duration_s,
+            output_dir=s.output_dir,
+        )
+    elif s.name == "scenario4_uk_opt":
+        # In real configs, relay_candidates should be added under scenario.
+        relay_candidates = ["Birmingham", "Manchester", "Cambridge"]
+        sc = Scenario4UKOpt(
+            src="London",
+            dst="Edinburgh",
+            relay_candidates=relay_candidates,
+            fiber_profile="smf28",
+            pulse_rate_hz=s.pulse_rate_hz,
+            duration_s=s.duration_s,
+            output_dir=s.output_dir,
+        )
+    else:
+        raise ValueError(f"Unsupported scenario name {s.name}")
+
+    return sc.run()
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Run a QUASAR scenario")
-    parser.add_argument("--config", required=True, help="Path to YAML config file")
-    args = parser.parse_args()
+# -----------------------------------------------------------------------------
+# CLI
+# -----------------------------------------------------------------------------
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Run a QUASAR scenario from YAML config.")
+    parser.add_argument("config", type=str, help="Path to YAML config file.")
+    args = parser.parse_args(argv)
 
-    with open(args.config, "r", encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_config(args.config)
 
-    scenario_id = cfg.get("scenario", {}).get("id", "1a")
-    if scenario_id not in ("1a", "1b"):
-        raise ValueError("This runner currently supports scenario 1a/1b only.")
+    reconfigure_logging()
+    logger.info("Loaded config from {}", args.config)
 
-    out_dir = cfg.get("run", {}).get("output_dir", "data/runs")
-    pathlib.Path(out_dir).mkdir(parents=True, exist_ok=True)
-
-    scenario = Scenario1Static(cfg)
-    results = scenario.run()
-    scenario.export(results, out_dir)
-    print("Run complete. Outputs written to:", out_dir)
+    try:
+        out_dir = _run_from_config(cfg)
+        logger.info("Scenario finished. Results in {}", out_dir)
+        return 0
+    except Exception as e:
+        logger.exception("Scenario failed: {}", e)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

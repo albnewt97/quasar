@@ -1,0 +1,13 @@
+# configs/presets/devices_baseline.yaml
+# ======================================================
+# Device preset: Baseline single-photon detectors and BSM
+# Maps to sequence_ext.physics.profiles.DEVICE_PRESETS["baseline"]
+# ======================================================
+
+name: baseline
+detector_eta: 0.80
+detector_dark_per_gate: 1.0e-6
+detector_dead_time_ns: 60
+detector_afterpulse: 0.02
+bsm_visibility: 0.98
+coincidence_window_ps: 500

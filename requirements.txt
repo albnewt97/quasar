@@ -1,6 +1,9 @@
 # Core simulator
 sequence-toolbox
 
+#yaml
+pyyaml
+
 # Dashboard & viz
 streamlit
 plotly

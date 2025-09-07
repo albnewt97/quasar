@@ -1,14 +1,14 @@
-# configs/scenario1_equidistant.yaml
+# configs/scenario1_uneven.yaml
 # ======================================================
-# Scenario 1a – Equidistant fiber links (A–C–B)
-# Baseline benchmarking setup
+# Scenario 1b – Uneven fiber distances (A–C–B)
+# Baseline benchmarking with asymmetric link lengths
 # ======================================================
 
 scenario:
-  name: scenario1_equidistant
+  name: scenario1_uneven
   pulse_rate_hz: 50000000    # 50 MHz
   duration_s: 2.0
-  output_dir: data/runs/sc1_equ
+  output_dir: data/runs/sc1_uneven
 
 devices:
   detector_eta: 0.8
