@@ -208,13 +208,26 @@ __marimo__/
 
 # QUASAR custom ignores
 
-# Simulation outputs
+# gitignore
+cat >> .gitignore << 'EOF'
+__pycache__/
+*.pyc
+.env/
+.venv/
 data/runs/
-*.parquet
-*.csv
-*.json
+runs/
+dist/
+*.egg-info/
+.ipynb_checkpoints/
+.DS_Store
+EOF
 
-# Logs and reports
-*.log
-reports/
-plots/
+# minimal package namespace (we’ll fill these in step 2)
+mkdir -p quasar/sequence_ext/{orchestrator,physics,io,viz,topo,scenarios}
+touch quasar/__init__.py
+echo '__version__ = "0.0.1"' > quasar/__init__.py
+touch quasar/sequence_ext/__init__.py
+for d in orchestrator physics io viz topo scenarios; do touch quasar/sequence_ext/$d/__init__.py; done
+
+# scripts & config folders
+mkdir -p scripts configs/presets data/runs dashboard

@@ -3,6 +3,13 @@
 **Tagline:** *Extensible simulator for MDI-QKD networks with fiber, free-space, and realistic physics.*
 
 ---
+## Getting started
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt   # or: pip install -e .
+python scenario1_static.py        # works as-is today
+
 
 ## Description
 
