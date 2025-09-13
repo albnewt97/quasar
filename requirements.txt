@@ -1,23 +1,160 @@
-# Core simulator
-sequence-toolbox
+# ======================================================================
+# QUASAR — requirements.txt
+# Purpose:
+#   - Keep the default install lean & portable (CORE only).
+#   - Provide clearly documented OPTIONAL groups you can enable by
+#     uncommenting lines when you need them (viz, distributed, accel, …).
+#
+# Versioning strategy:
+#   - Use compatible-release pins (~=) for stability without over-constraining.
+#   - For production, generate a LOCK file with exact versions:
+#       pip install pip-tools
+#       pip-compile --generate-hashes -o requirements.lock.txt requirements.txt
+#     Then deploy with:
+#       pip install -r requirements.lock.txt
+#
+# Python: 3.10+
+# ======================================================================
 
-#yaml
-pyyaml
+############################
+# 1) CORE RUNTIME (Default) #
+############################
+# Scientific core
+numpy~=1.26.4
+scipy~=1.11.4
+pandas~=2.1.4
+pyarrow~=14.0.2
 
-# Dashboard & viz
-streamlit
-plotly
-matplotlib
-pyvis
-networkx
+# Config & validation
+PyYAML~=6.0.2
+jsonschema~=4.22.0
 
-# Data pipeline
-pandas
-pyarrow
-numpy
-scipy
+# Graphs, math, viz (baseline)
+networkx~=3.2.1
+matplotlib~=3.8.4
+plotly~=5.22.0
 
-# Dev tools (optional but recommended)
-ruff
-mypy
-pytest
+# Nice CLI/logging
+rich~=13.7.1
+
+# ----------------------------------------------------------------------
+# Install just the core:
+#   pip install -r requirements.txt
+# ----------------------------------------------------------------------
+
+
+#################################
+# 2) OPTIONAL GROUPS (Commented) #
+#################################
+# Enable the groups you need by UNcommenting their lines.
+# Tip: Keep a local copy (e.g., requirements.local.txt) with your chosen
+# extras uncommented, and install with:
+#   pip install -r requirements.local.txt
+#
+# Alternatively, split into files (requirements/base.txt, distributed.txt…)
+# and include with `-r`: see the bottom of this file for an example layout.
+
+# ---- [viz] Graph rendering / export add-ons ---------------------------
+# graphviz~=0.20.3
+
+# ---- [distributed] Parallel & cluster backends -----------------------
+# Choose one or both depending on your infra.
+# ray~=2.9.0
+# dask[distributed]~=2024.5.1
+
+# ---- [accel] Hot-path acceleration (Monte Carlo, binning, etc.) ------
+# NOTE: JAX wheels are platform/GPU specific. If you use CUDA, install a
+# matching jaxlib as documented by JAX. Keep these optional.
+# numba~=0.59.1
+# jax~=0.4.26
+
+# ---- [service] REST API / microservice mode --------------------------
+# fastapi~=0.111.0
+# uvicorn[standard]~=0.30.0
+# pydantic~=2.7.0
+# orjson~=3.10.0
+
+# ---- [docs] MkDocs + Material + API docs -----------------------------
+# mkdocs~=1.6.0
+# mkdocs-material~=9.5.20
+# mkdocstrings[python]~=0.24.0
+
+# ---- [notebooks] Interactive exploration -----------------------------
+# jupyter~=1.0.0
+# ipykernel~=6.29.5
+# tqdm~=4.66.5
+
+# ---- [tests] Testing & coverage --------------------------------------
+# pytest~=8.3.1
+# pytest-cov~=5.0.0
+# hypothesis~=6.98.0
+
+# ---- [lint] Linting / formatting / typing ----------------------------
+# black~=24.8.0
+# ruff~=0.5.7
+# mypy~=1.10.0
+# types-PyYAML~=6.0.12.20240808
+# pandas-stubs~=2.2.2.240807
+
+# ---- [dev] One-switch developer stack (copy these under your local) --
+# (Equivalent to installing all of the above optional groups.)
+# ray~=2.9.0
+# dask[distributed]~=2024.5.1
+# numba~=0.59.1
+# jax~=0.4.26
+# fastapi~=0.111.0
+# uvicorn[standard]~=0.30.0
+# pydantic~=2.7.0
+# orjson~=3.10.0
+# mkdocs~=1.6.0
+# mkdocs-material~=9.5.20
+# mkdocstrings[python]~=0.24.0
+# jupyter~=1.0.0
+# ipykernel~=6.29.5
+# tqdm~=4.66.5
+# pytest~=8.3.1
+# pytest-cov~=5.0.0
+# hypothesis~=6.98.0
+# black~=24.8.0
+# ruff~=0.5.7
+# mypy~=1.10.0
+# types-PyYAML~=6.0.12.20240808
+# pandas-stubs~=2.2.2.240807
+# graphviz~=0.20.3
+
+
+# ======================================================================
+# 3) ADVANCED: Split-file layout (optional)
+# ----------------------------------------------------------------------
+# If you prefer a multi-file setup, create this structure:
+#
+#   requirements/
+#     base.txt          # (put the CORE block here)
+#     viz.txt           # (graphviz…)
+#     distributed.txt   # (ray, dask…)
+#     accel.txt         # (numba, jax…)
+#     service.txt       # (fastapi, uvicorn, pydantic, orjson)
+#     docs.txt          # (mkdocs, mkdocs-material, mkdocstrings)
+#     notebooks.txt     # (jupyter, ipykernel, tqdm)
+#     tests.txt         # (pytest, pytest-cov, hypothesis)
+#     lint.txt          # (black, ruff, mypy, stubs)
+#     dev.txt           # (-r includes of all files above)
+#
+# Example dev.txt:
+#   -r base.txt
+#   -r distributed.txt
+#   -r accel.txt
+#   -r service.txt
+#   -r docs.txt
+#   -r notebooks.txt
+#   -r tests.txt
+#   -r lint.txt
+#
+# Then your top-level requirements.txt can simply be:
+#   -r requirements/base.txt
+#
+# And developers install everything with:
+#   pip install -r requirements/dev.txt
+# ======================================================================
+
+# End of file
