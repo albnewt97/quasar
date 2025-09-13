@@ -1,115 +1,301 @@
-# pyproject.toml
+# ======================================================================
+# QUASAR — pyproject.toml
+# Industrial-grade, PEP 621-compliant packaging with Hatch.
+#
+# Goals:
+#  - Clear separation of core vs optional deps (viz, service, accel, etc.)
+#  - Reproducible builds (pin in lockfiles; keep lower bounds here)
+#  - First-class developer UX (linting, typing, testing pre-configured)
+#  - Extensibility via plugin entry points
+#  - CI-friendly: minimal assumptions, optional heavy extras
+#
+# Notes on version pinning:
+#  - In pyproject we specify MINIMUM versions (>=) for broad compatibility.
+#  - For CI/CD and releases, use a lockfile (pip-tools, uv, poetry lock)
+#    to pin exact versions. That keeps local dev fast but releases reproducible.
+# ======================================================================
+
 [build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
+# Hatchling is a modern, fast PEP 517 backend with clean config.
+requires = ["hatchling>=1.21"]
+build-backend = "hatchling.build"
 
 [project]
-name = "quasar-mdiqkd"
-version = "0.1.0"
-description = "Production-grade MDI-QKD simulation stack built on SeQUeNCe extensions"
+# ----------------------------------------------------------------------
+# Core project metadata (PEP 621)
+# ----------------------------------------------------------------------
+name = "quasar"
+# Keep version dynamic to avoid manual bumps; read from quasar/__init__.py
+# Alternative (commented below): hatch-vcs for Git tag based versions.
+dynamic = ["version"]
+
+description = "QUASAR — Industrial-grade quantum network simulator with device-faithful physics, multi-layer metrics, and integrated finite-key security."
 readme = "README.md"
 requires-python = ">=3.10"
-authors = [{ name = "Naman Srivastava" }]
-license = { text = "Apache-2.0" }
-keywords = ["quantum", "QKD", "MDI-QKD", "simulation", "SeQUeNCe", "networking"]
+license = { file = "LICENSE" }
+
+# Keep author list minimal here; use AUTHORS.md for the full roster.
+authors = [
+  { name = "QUASAR Contributors", email = "maintainers@example.org" }
+]
+maintainers = [
+  { name = "QUASAR Maintainers", email = "maintainers@example.org" }
+]
+
+keywords = [
+  "quantum networking",
+  "QKD",
+  "MDI-QKD",
+  "entanglement",
+  "discrete-event simulation",
+  "finite-key",
+  "security",
+  "network simulation",
+]
+
 classifiers = [
-  "Development Status :: 3 - Alpha",
+  "Development Status :: 3 - Alpha",                   # Update as maturity increases
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
   "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Topic :: Security :: Cryptography",
 ]
 
+# ----------------------------------------------------------------------
+# Core runtime dependencies
+# Keep these reasonably light; heavy/optional stacks go under extras.
+# Use lower bounds for compatibility; pin exacts in lockfiles for releases.
+# ----------------------------------------------------------------------
 dependencies = [
-  "pydantic>=2.8",
-  "pyyaml>=6.0",
   "numpy>=1.26",
-  "pandas>=2.2",
-  "pyarrow>=16.1",
+  "scipy>=1.11",
+  "pandas>=2.1",
+  "pyarrow>=14.0",
+  "PyYAML>=6.0",
+  "networkx>=3.2",
   "matplotlib>=3.8",
-  "networkx>=3.3",
-  "scipy>=1.13",
-  "tqdm>=4.66",
-  "streamlit>=1.36",
-  "plotly>=5.23",
-  "shapely>=2.0",
+  "plotly>=5.20",
+  "jsonschema>=4.22",
   "rich>=13.7",
-  "typer>=0.12",
-  "loguru>=0.7",
-  # geopandas is optional on Windows; users can install via extra below
 ]
 
 [project.optional-dependencies]
-geo = ["geopandas>=1.0"]
-dev = [
-  "pytest>=8.2",
-  "pytest-cov>=5.0",
-  "ruff>=0.5.0",
-  "mypy>=1.10",
-  "types-PyYAML>=6.0.12",
-  "types-setuptools",
+# ----------------------------------------------------------------------
+# Optional extras by functional domain.
+# Install with: pip install 'quasar[dev]' or 'quasar[distributed]'
+# ----------------------------------------------------------------------
+
+# Visualization add-ons (e.g., DOT rendering)
+viz = [
+  "graphviz>=0.20.1"
 ]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["sequence_ext*", "configs*"]
+# Distributed execution & scaling backends.
+# Both Ray and Dask are included; users can choose one in practice.
+distributed = [
+  "ray>=2.9",
+  "dask[distributed]>=2024.5.0",
+]
 
-# If you later decide to expose CLI entry points (e.g., `quasar-run`),
-# add __init__.py to the `scripts/` folder to make it a package and then
-# uncomment the following block, pointing to the scripts' main() functions.
-# [project.scripts]
-# quasar-run = "scripts.run_scenario:main"
-# quasar-sweep = "scripts.sweep:main"
-# quasar-report = "scripts.report:main"
+# Hardware acceleration for hot Monte Carlo paths, time binning, etc.
+# JAX wheels can be platform-specific; keep it optional and documented.
+accel = [
+  "numba>=0.59",
+  "jax>=0.4.26",
+]
 
-# ----------------------------
-# Tooling configuration
-# ----------------------------
+# REST service / API surface (for job submission, dashboards, etc.)
+service = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "pydantic>=2.6",
+  "orjson>=3.9",
+]
+
+# Documentation toolchain (MkDocs + material theme + API docs)
+docs = [
+  "mkdocs>=1.5",
+  "mkdocs-material>=9.5",
+  "mkdocstrings[python]>=0.24",
+]
+
+# Notebooks for exploration and tutorials
+notebooks = [
+  "jupyter>=1.0",
+  "ipykernel>=6.29",
+  "tqdm>=4.66",
+]
+
+# Testing & QA
+tests = [
+  "pytest>=8.0",
+  "pytest-cov>=5.0",
+  "hypothesis>=6.92",      # Property-based tests for stochastic components
+]
+
+# Linters/formatters/type-checkers
+lint = [
+  "black>=24.3",
+  "ruff>=0.5",
+  "mypy>=1.10",
+  "types-PyYAML>=6.0.12.20240808",
+  "pandas-stubs>=2.2.2.240807",
+]
+
+# Developer convenience bundle: install everything needed to contribute.
+# This meta-extra references other extras via a PEP 508 recursive spec.
+dev = [
+  "quasar[tests,viz,distributed,service,docs,lint,notebooks]"
+]
+
+[project.scripts]
+# ----------------------------------------------------------------------
+# Console entry points (CLI).
+# After install: `quasar simulate ...`
+# ----------------------------------------------------------------------
+quasar = "quasar.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/<your-org>/quasar"
+Repository = "https://github.com/<your-org>/quasar"
+Issues = "https://github.com/<your-org>/quasar/issues"
+Documentation = "https://github.com/<your-org>/quasar#readme"
+
+# ----------------------------------------------------------------------
+# Plugin entry point namespace.
+# Third-party packages can register components (equipment, noise, protocols, etc.)
+# Example (in a separate package's pyproject):
+# [project.entry-points."quasar.plugins"]
+# my_lab_detectors = "lab_pkg.detectors:Registry"
+# ----------------------------------------------------------------------
+[project.entry-points."quasar.plugins"]
+# (examples; leave commented until real plugins exist)
+# vendor_snsps = "quasar_vendor_plugins.snsps:Plugin"
+# fancy_channels = "acme_qnet.channels:Plugin"
+
+# ----------------------------------------------------------------------
+# Version management:
+# - We read __version__ from quasar/__init__.py by default (simple, explicit).
+# - For Git-based semantic versioning, consider hatch-vcs (below).
+# ----------------------------------------------------------------------
+[tool.hatch.version]
+path = "quasar/__init__.py"
+
+# If you prefer Git tags for versions, use:
+# [build-system]
+# requires = ["hatchling>=1.21", "hatch-vcs>=0.4"]
+# build-backend = "hatchling.build"
+#
+# [tool.hatch.version]
+# source = "vcs"
+#
+# [tool.hatch.build.hooks.vcs]
+# version-file = "quasar/_version.py"
+
+[tool.hatch.build.targets.wheel]
+# Build settings for binary wheels.
+packages = ["quasar"]
+
+# Include non-code assets (schemas, static files) when you add them:
+# include = [
+#   "quasar/io/schemas/**",
+#   "quasar/viz/static/**",
+#   "quasar/py.typed",           # if distributing type hints
+# ]
+
+[tool.hatch.build.targets.sdist]
+# Source distribution pruning (keeps sdists lean)
+exclude = [
+  "/.github",
+  "/.vscode",
+  "/.idea",
+  "/docs/site",
+  "/results",
+  "/benchmarks",
+  "/.pytest_cache",
+  "/.ruff_cache",
+]
+
+# ======================================================================
+# Quality Gates & Tooling
+# ======================================================================
 
 [tool.pytest.ini_options]
+# Keep test output concise; append -vv locally for debugging.
 minversion = "8.0"
-addopts = "-q --disable-warnings"
+addopts = "-ra -q --cov=quasar --cov-report=term-missing"
 testpaths = ["tests"]
 
 [tool.coverage.run]
 branch = true
-source = ["sequence_ext"]
-omit = ["**/__init__.py"]
+source = ["quasar"]
 
 [tool.coverage.report]
 show_missing = true
-skip_empty = true
+skip_covered = true
+precision = 2
+
+[tool.black]
+line-length = 100
+target-version = ["py310"]
 
 [tool.ruff]
+# Ruff handles linting + import sorting + some code mods.
 line-length = 100
+src = ["quasar", "tests"]
 target-version = "py310"
-select = [
-  "E",  # pycodestyle errors
-  "F",  # pyflakes
-  "I",  # isort
-  "B",  # flake8-bugbear
-]
-ignore = [
-  "E203",  # whitespace before ':', conflicts with black style if used later
-]
 
-[tool.ruff.isort]
-known-first-party = ["sequence_ext", "configs"]
+[tool.ruff.lint]
+# Rule sets:
+#  - E/F: pycodestyle/pyflakes
+#  - I: isort-equivalent import sorting
+#  - B: bugbear (common pitfalls)
+#  - UP: pyupgrade (modern syntax)
+#  - ANN: annotations (nudges toward typing)
+#  - W: miscellaneous warnings
+select = ["E", "F", "I", "B", "UP", "ANN", "W"]
+
+# E203 and E501 are commonly disabled with Black to avoid conflicts and
+# to allow long scientific lines (equations, URLs).
+ignore = ["E203", "E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# Don’t require annotations for test code; keep tests ergonomic.
+"tests/**" = ["ANN"]
 
 [tool.mypy]
+# Type checking: aim for strong but pragmatic defaults.
 python_version = "3.10"
-warn_unused_configs = true
-warn_redundant_casts = true
 warn_unused_ignores = true
-warn_return_any = true
+warn_redundant_casts = true
+warn_unused_configs = true
 no_implicit_optional = true
-strict_optional = true
+check_untyped_defs = true
+disallow_incomplete_defs = false
 disallow_untyped_defs = false
-ignore_missing_imports = true
+strict_equality = true
+# Add plugins here if you rely on pydantic, numpy typing plugins, etc.
+plugins = []
+mypy_path = "quasar"
 
-# Streamlit-specific note:
-# If Streamlit is not installed in CI, you can skip dashboard tests or
-# install the base 'project.dependencies' which includes streamlit.
+# ======================================================================
+# Optional: MkDocs configuration lives in mkdocs.yml (not here).
+# Optional: Pre-commit hooks live in .pre-commit-config.yaml.
+# Optional: Docker build files live under ./docker/.
+#
+# CI Tips:
+#  - For speed, cache pip wheels and ruff/mypy/pytest caches.
+#  - Split lint/type/test jobs; run "pip install .[dev]" for full gates.
+#  - Add a matrix for Python 3.10–3.12.
+#
+# Releasing:
+#  - Tag the repo (e.g., v0.1.0), build wheels/sdist with Hatch,
+#  - Attach SBOM/signatures if your org requires, publish to PyPI,
+#  - Push container images if applicable.
+# ======================================================================
