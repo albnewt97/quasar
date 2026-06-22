@@ -1,0 +1,25 @@
+cff-version: 1.2.0
+message: "If you use Quasar in your research, please cite it."
+title: "Quasar: A Telemetry-Driven Quantum Network Digital Twin"
+version: 0.1.0
+date-released: "2025-01-01"
+license: Apache-2.0
+repository-code: https://github.com/quasar-qndt/quasar
+abstract: >
+  Quasar is a production-grade quantum network digital twin simulator
+  that models quantum communication infrastructure as a time-varying,
+  telemetry-driven cyber-physical system. It introduces five structural
+  novelties absent from existing academic packages: non-Markovian
+  telemetry-driven channels via memory-kernel convolution, Raman
+  co-existence noise from classical WDM traffic, stateful device aging,
+  classical-quantum control plane desynchronisation, and a
+  tensor-network reduced-order state backend.
+authors:
+  - name: "Quasar Contributors"
+keywords:
+  - quantum networks
+  - digital twin
+  - quantum repeaters
+  - non-Markovian
+  - entanglement distribution
+  - quantum simulation

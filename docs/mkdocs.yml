@@ -1,0 +1,49 @@
+site_name: Quasar — Quantum Network Digital Twin
+site_description: >
+  Production-grade quantum network digital twin simulator with
+  non-Markovian telemetry, Raman co-existence, device aging,
+  and tensor-network state tracking.
+site_url: https://quasar-qndt.github.io/quasar/
+repo_url: https://github.com/quasar-qndt/quasar
+repo_name: quasar-qndt/quasar
+
+theme:
+  name: material
+  palette:
+    scheme: slate
+    primary: blue
+    accent: cyan
+  font:
+    code: JetBrains Mono
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - content.code.annotate
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - Physics:
+    - Overview & Equations: physics/README.md
+    - Channel Model: physics/channel_model.md
+    - Non-Markovian Dynamics: physics/nonmarkovian.md
+    - Raman Co-existence: physics/raman.md
+    - Device Aging: physics/aging.md
+  - API Reference:
+    - Core: api/core.md
+    - Physics: api/physics.md
+    - Telemetry: api/telemetry.md
+    - Quantum: api/quantum.md
+    - GUI: api/gui.md
+  - Examples:
+    - Live Fiber Twin: examples/live_fiber_twin.md
+    - Coexistence Sweep: examples/coexistence_sweep.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google

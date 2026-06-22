@@ -1,0 +1,92 @@
+{
+  "scenario_name": "Metro Demo — Illustrative (S values chosen for visibility, NOT calibrated)",
+  "nodes": [
+    {
+      "node_id": "alice",
+      "qubit_index": 0,
+      "t2_nominal": 200.0,
+      "wear_const_nc": 1000000.0,
+      "calib_drift_rate": 1e-06
+    },
+    {
+      "node_id": "repeater",
+      "qubit_index": 1,
+      "t2_nominal": 200.0,
+      "wear_const_nc": 1000000.0,
+      "calib_drift_rate": 1e-06
+    },
+    {
+      "node_id": "bob",
+      "qubit_index": 2,
+      "t2_nominal": 200.0,
+      "wear_const_nc": 1000000.0,
+      "calib_drift_rate": 1e-06
+    }
+  ],
+  "links": [
+    {
+      "link_id": "link_ar",
+      "source_node": "alice",
+      "dest_node": "repeater",
+      "lambda_q_nm": 1550.0,
+      "gate_width_s": 1e-09,
+      "qubit_index": 0,
+      "fiber": {
+        "length_km": 50.0,
+        "attenuation_db_per_km": 0.2,
+        "eta_detector": 0.8,
+        "t_opt": 0.5,
+        "p_dc": 1e-05
+      },
+      "classical_channels": []
+    },
+    {
+      "link_id": "link_rb",
+      "source_node": "repeater",
+      "dest_node": "bob",
+      "lambda_q_nm": 1550.0,
+      "gate_width_s": 1e-09,
+      "qubit_index": 1,
+      "fiber": {
+        "length_km": 50.0,
+        "attenuation_db_per_km": 0.2,
+        "eta_detector": 0.8,
+        "t_opt": 0.5,
+        "p_dc": 1e-05
+      },
+      "classical_channels": []
+    }
+  ],
+  "kernel": {
+    "type": "exponential",
+    "tau_x": 30.0,
+    "tau_y": 30.0,
+    "tau_z": 120.0,
+    "gamma": 0.1,
+    "omega_0": 1.0,
+    "sigma": 10.0
+  },
+  "sensitivity": [
+    [0.0, 0.3, 0.1],
+    [0.0, 0.3, 0.0],
+    [0.006, 0.0, 0.0015]
+  ],
+  "coexistence_channels": [
+    {
+      "channel_id": "ch_1310_upstream",
+      "lambda_c_nm": 1310.0,
+      "launch_power_mw": 1.0,
+      "active": true
+    },
+    {
+      "channel_id": "ch_1570_downstream",
+      "lambda_c_nm": 1570.0,
+      "launch_power_mw": 1.0,
+      "active": true
+    }
+  ],
+  "duration_s": 30.0,
+  "dt_s": 0.1,
+  "chi_max": 4,
+  "kappa_max": 8
+}
