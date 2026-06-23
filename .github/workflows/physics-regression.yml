@@ -1,7 +1,5 @@
 name: Physics Regression
-on:
-  push:
-    paths: ["src/qndt/physics/**", "tests/test_*.py"]
+on: [push]
 jobs:
   physics:
     runs-on: ubuntu-latest
@@ -18,4 +16,4 @@ jobs:
         env:
           PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1"
           QT_QPA_PLATFORM: offscreen
-        run: pytest tests/ -m physics_regression -v --tb=long
+        run: pytest tests/ -m physics_regression -v --tb=long -p anyio
