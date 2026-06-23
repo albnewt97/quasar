@@ -18,7 +18,19 @@ P_{\mathrm{bwd}} = P_c\,\beta(\lambda_c,\lambda_q)\,
   \Delta\lambda_q\,\frac{1-e^{-2\alpha L}}{2\alpha}
 ```
 
-`P_c` is the classical launch power, `β(λc, λq)` is the Raman cross-section coupling the classical pump wavelength to the quantum signal wavelength, `Δλq` is the detection filter bandwidth around the quantum wavelength, `L` is the fiber span length, and `α` is the linear attenuation coefficient. The forward term decays with the same exponential loss the signal itself experiences over the full span (`e^{-αL}`); the backward term instead integrates scattering contributions from every point along the fiber that can still reach the input end, which is why it takes the `(1 - e^{-2αL})/(2α)` form rather than a simple exponential.
+`P_c` is the classical launch power, `Δλq` is the detection filter bandwidth, `L` the fibre span length, and `α` the linear attenuation coefficient. The cross-section `β(λc, λq)` used in the code corresponds to `C_R(Δν)` in the whitepaper (§5, Eqs 14–15) — same physical quantity, different parameterisation. The forward term decays as `e^{−αL}` (same exponential loss as the signal); the backward term integrates scattering contributions from every point along the fibre, giving the `(1 − e^{−2αL})/(2α)` form.
+
+Near the quantum channel the cross-section follows a V-shaped linear law with distinct Stokes / anti-Stokes slopes (whitepaper §5, Eq 16):
+
+```math
+C_{\mathrm{R}}(\Delta\nu) \simeq
+\begin{cases}
+C_0 + \beta_{\mathrm{S}}\,|\Delta\nu|, & \nu_{\mathrm{cl}} > \nu_{\mathrm{q}} \quad (\text{Stokes}) \\[4pt]
+C_0 + \beta_{\mathrm{AS}}\,|\Delta\nu|, & \nu_{\mathrm{cl}} < \nu_{\mathrm{q}} \quad (\text{anti-Stokes})
+\end{cases}
+```
+
+The code implements this via a discrete lookup table `β(λc, λq)` at calibrated wavelength pairs rather than the continuous V-shaped law (see §SMF-28 Cross-Section Values below).
 
 ## Dark Count Rate Contribution
 
@@ -29,11 +41,18 @@ r_{\mathrm{Raman,tot}}(t) = \sum_{c \in \mathrm{active}(t)}
   \frac{(P_{\mathrm{fwd}} + P_{\mathrm{bwd}})\cdot\eta_{\mathrm{det}}\cdot T_{\mathrm{opt}}}{h\cdot\nu_q}
 ```
 
-- **`η_det`** — single-photon detector efficiency: not every Raman photon that arrives at the detector face actually registers a click.
-- **`T_opt`** — optical transmission of the filtering and coupling stage between the fiber and the detector; imperfect filters pass some Raman background along with the wanted signal.
-- **`h·ν_q`** — the photon energy at the quantum wavelength, converting optical power (watts) into a photon arrival rate (Hz).
+- **`η_det`** — single-photon detector efficiency.
+- **`T_opt`** — optical transmission of the filter and coupling stage (implementation extension; not in the whitepaper's §5 formula).
+- **`h·ν_q`** — photon energy at the quantum wavelength, converting power (W) to rate (Hz).
 
-The resulting rate is converted into a per-gate click probability, `p_click_noise(t) = p_dc + (1 - exp(-r_Raman_tot · τ_gate))`, which Quasar's `CoexistenceNoiseEngine.ptm()` then turns into a symmetric X/Z PTM contribution — Raman-induced detection events are treated as collapsing the qubit state, so they degrade the channel as combined bit-flip and phase-flip noise.
+The collected Raman power raises the effective background floor Y₀ entering the QBER and key-rate estimates (whitepaper §5, Eq 17):
+
+```math
+p_{\mathrm{R}} = \frac{\eta_{\mathrm{det}}\,T_{\mathrm{opt}}\,\tau_{\mathrm{gate}}}{h\nu_q}\,P_{\mathrm{R}},
+\qquad Y_0 = 2\,p_{\mathrm{dc}} + p_{\mathrm{R}}
+```
+
+The factor of 2 on p_dc reflects the BB84 dual-detector receiver: each single-photon detector contributes independent intrinsic dark counts, while p_R enters once (a Raman photon registers on one arm). In the code (`CoexistenceNoiseEngine.effective_dark_prob`) the Poisson survival form `p_R ≈ 1 − exp(−r_Raman · τ_gate)` is used for accuracy at larger rates. `CoexistenceNoiseEngine.ptm()` converts Y₀ into a symmetric X/Z PTM contribution — Raman events collapse the qubit state as combined bit-flip and phase-flip noise.
 
 ## SMF-28 Cross-Section Values
 

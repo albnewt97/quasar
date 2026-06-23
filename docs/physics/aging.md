@@ -2,28 +2,37 @@
 
 ## Coherence Time Wear Model
 
+Quasar makes T₂ a function of accumulated operational duty cycle D(t) = ∫₀ᵗ u(t′) dt′, where u(t′) ∈ [0,1] is the instantaneous node utilisation. The wear law is Matthiessen's rule applied to the decoherence rate (whitepaper §6):
+
 ```math
-T_2(N) = T_2^{(0)}\,e^{-N/N_c}
+\frac{1}{T_2\!\bigl(D\bigr)} = \frac{1}{T_2^{(0)}} + \kappa\,D(t),
+\qquad \frac{1}{T_2} = \frac{1}{2\,T_1} + \frac{1}{T_\phi}
 ```
 
-`N` is the cumulative number of operations (gates, channel applications, measurements) a quantum memory node has performed since the start of the run, and `N_c` is the characteristic wear constant — the operation count at which `T_2` has decayed to `1/e` of its nominal value `T_2^{(0)}`. Physically, this models the cumulative effect of repeated gate-pulse heating cycles, mechanical and thermal stress on the device substrate, and gradual drift away from the calibration point each operation assumed — none of which reverse themselves between operations, so the decay is monotonic in `N` rather than in elapsed wall-clock time.
+T₂⁽⁰⁾ is the as-calibrated coherence time, κ is the wear coefficient, and the second identity (standard T₁/T₂/T_φ relation) is exact. Wear acts on the pure-dephasing time T_φ; the longitudinal relaxation time T₁ is not subject to duty-cycle wear. The resulting dephasing eigenvalues are λ_x(t) = λ_y(t) = exp(−t_idle/T₂(D)) while λ_z is governed by T₁.
+
+> **Code discrepancy:** `DeviceAgingModel` (`src/qndt/physics/aging.py`) currently implements `T₂(N) = T₂⁽⁰⁾·exp(−N/Nc)` — exponential decay indexed by discrete cumulative op-count N, not the continuous duty-cycle integral D. See the Known Discrepancies table in [README.md](README.md).
 
 ## Gate Overrotation Drift
 
+> **Implementation extension** — this model is not in the whitepaper (`quasar_physics.tex`). It describes code behaviour in `DeviceAgingModel.gate_overrotation` (`src/qndt/physics/aging.py`).
+
 ```math
-\varepsilon(t) = \varepsilon_0 + \kappa\,t
+\varepsilon(t) = \varepsilon_0 + \kappa_{\mathrm{drift}}\,t
 ```
 
-Independently of coherence decay, every gate carries a small systematic miscalibration `ε(t)` that grows *linearly* with the time elapsed since the node's last calibration — `κ` is the drift rate. This models the simple fact that a calibration captures the device's parameters at one instant, and the device continues to drift away from that snapshot the longer it operates before being recalibrated; it is a slow, deterministic process distinct from the stochastic decoherence captured by `T_2(N)`.
+Note: κ_drift here is the calibration drift rate [rad/s], distinct from the wear coefficient κ in the Matthiessen rule above. Every gate carries a small systematic miscalibration `ε(t)` that grows linearly with time elapsed since the node's last calibration. This models the fact that a calibration captures device parameters at one instant, and the device drifts from that snapshot over time — a slow, deterministic process distinct from the stochastic decoherence captured by the T₂ wear model.
 
 ## Idle Dephasing from Classical Hold Times
 
 ```math
 p_z^{\mathrm{idle}} = \tfrac{1}{2}
-  \!\left(1 - e^{-t_{\mathrm{idle}}/T_2(N)}\right)
+  \!\left(1 - e^{-t_{\mathrm{idle}}/T_2(D)}\right)
 ```
 
-This equation is where the classical and quantum layers of the digital twin couple together (novelty #4, §6). `t_idle` is not a fixed parameter — it is `induced_idle`, the waiting time a quantum memory is forced to hold state because the **classical control plane** has not yet delivered the signalling needed to proceed (route computation, acknowledgment, retransmission after a dropped packet). Whatever congestion or jitter the `AsynchronousControlPlane` produces on the classical side is fed directly into this equation, converting classical network delay into a literal dephasing probability on the qubit it forces to wait — and a longer wait against an already-degraded `T2(N)` produces disproportionately more dephasing, so the two effects compound.
+This is where the classical and quantum layers couple (whitepaper §7). `t_idle` is `induced_idle` — the waiting time a quantum memory is forced to hold state because the classical control plane has not yet delivered the signalling needed to proceed (route computation, acknowledgment, retransmission). Whatever congestion or jitter the `AsynchronousControlPlane` produces converts directly into a dephasing probability on the waiting qubit; a longer wait against an already-worn T₂(D) compounds both effects. The Z-error probability p_z maps to the transverse PTM eigenvalues via λ_x = λ_y = 1 − 2p_z (standard phase-flip eigenvalue relation).
+
+> **Code note:** the code uses T₂(N) (exponential model) rather than T₂(D) (Matthiessen rule) — see discrepancy #1 in the Known Discrepancies table.
 
 ## Interpreting the Aging Dashboard
 

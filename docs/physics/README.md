@@ -86,26 +86,14 @@ Quasar ships three standard kernels (with $\Theta$ the Heaviside step, enforcing
 ```math
 \begin{align}
 \text{Exponential:} \quad & K(\tau) = \frac{1}{\tau_c}\,e^{-\tau/\tau_c}\,\Theta(\tau) \tag{8} \\[6pt]
-\text{Lorentzian:}  \quad & K(\tau) = e^{-\gamma\tau}\cos(\Omega\tau)\,\Theta(\tau) \tag{9} \\[6pt]
-\text{Gaussian:}    \quad & K(\tau) = \frac{1}{\sqrt{2\pi\sigma^2}}\,e^{-\tau^2/2\sigma^2}\,\Theta(\tau) \tag{10}
+\text{Lorentzian:}  \quad & K(\tau) = \mathcal{N}_{\!L}\,e^{-\gamma\tau}\cos(\Omega\tau)\,\Theta(\tau) \tag{9} \\[6pt]
+\text{Gaussian:}    \quad & K(\tau) = \mathcal{N}_{\!G}\,e^{-\tau^2/2\sigma^2}\,\Theta(\tau) \tag{10}
 \end{align}
 ```
 
-The exponential kernel recovers the memoryless (Markovian) limit as $\tau_c \to 0$; the Lorentzian admits information back-flow through oscillatory sign changes; the Gaussian models a finite, smoothly-windowed memory.
+with $\Theta$ the Heaviside step enforcing causality and $\mathcal{N}_{\!L} = (\gamma^2+\Omega^2)/\gamma$, $\mathcal{N}_{\!G} = \sqrt{2/\pi\sigma^2}$ the half-line normalisation constants. The exponential kernel recovers the memoryless (Markovian) limit as $\tau_c \to 0$; the damped-oscillatory kernel admits information back-flow through its sign changes; the Gaussian models a finite, smoothly-windowed memory.
 
 > See [channel_model.md](channel_model.md) and [nonmarkovian.md](nonmarkovian.md) for implementation details.
-
-### §3.2 Time discretisation
-
-**[LITERATURE-GROUNDED]** (GKSL semigroup) / **[ARCHITECTURAL COUPLING]** (CP-boundary projection) — [[4]](#ref-4) [[5]](#ref-5) [[6]](#ref-6)
-
-When the continuous channel with PTM eigenvalues $\lambda_i$ (referenced to unit time $T = 1\,\mathrm{s}$) is applied over a discrete timestep $\Delta t$, Quasar uses *generator (semigroup) scaling* derived from the GKSL equation:
-
-```math
-\lambda_i(\Delta t) = e^{-\gamma_i \Delta t}, \qquad \gamma_i = -\ln \lambda_i \tag{D}
-```
-
-The composition identity $\bigl(\lambda_i(\Delta t)\bigr)^{T/\Delta t} = \lambda_i(T)$ holds exactly when all implied Lindblad rates $\Gamma_k \geq 0$ (Markovian / CP-divisible channel). If any $\Gamma_k < 0$ — the non-Markovian case — CP clamping is applied after scaling: the inferred Pauli rates $(p_x, p_y, p_z)$ are projected onto $[0, 0.25]$ and eigenvalues reconstructed. This projection preserves complete positivity at the cost of breaking exact $\Delta t$-invariance for non-Markovian channels; the departure is the observable signature of memory effects.
 
 ---
 
@@ -161,10 +149,10 @@ where $P_0$ is the launched classical power, $L$ the fibre length, $\alpha$ the 
 For $M$ active classical channels the contributions add incoherently, $P_{\mathrm{R}} = \sum_{m=1}^{M} P^{(m)}$. The collected Raman power is then converted into an induced detector count probability per gate of length $\Delta t$ and detection efficiency $\eta$:
 
 ```math
-p_{\mathrm{R}} = \frac{\eta\,\Delta t}{h\nu}\,P_{\mathrm{R}}, \qquad Y_0 = p_{\mathrm{dark}} + p_{\mathrm{R}} \tag{17}
+p_{\mathrm{R}} = \frac{\eta\,\Delta t}{h\nu}\,P_{\mathrm{R}}, \qquad Y_0 = 2\,p_{\mathrm{dark}} + p_{\mathrm{R}} \tag{17}
 ```
 
-Classical traffic raises the effective dark-count floor $Y_0$, which feeds directly into the link's QBER and secure-key-rate estimates [[11]](#ref-11). This is the mechanism by which a busy classical fibre silently degrades a co-existing quantum channel.
+Classical traffic raises the effective background floor $Y_0$ that feeds directly into the link's QBER and secure-key-rate estimates [[11]](#ref-11). Quasar models a BB84-style dual-detector receiver: the two single-photon detectors contribute independent intrinsic dark counts, hence the $2\,p_{\mathrm{dark}}$ multiplicity, whereas the Raman term $p_{\mathrm{R}}$ enters once (an incident Raman photon registers on one detector arm). This is the mechanism by which a busy classical fibre silently degrades a co-existing quantum channel.
 
 > See [raman.md](raman.md) for implementation details.
 
@@ -174,13 +162,13 @@ Classical traffic raises the effective dark-count floor $Y_0$, which feeds direc
 
 **[PHENOMENOLOGICAL MODEL]** — [[1]](#ref-1) [[6]](#ref-6)
 
-Memory nodes in Quasar carry a coherence budget that erodes with use. Idealised dephasing gives $\lambda_z(t) = e^{-t/T_2}$; Quasar makes $T_2$ itself a function of accumulated operational duty cycle $D(t) = \int_0^t u(t')\,\mathrm{d}t'$, where $u$ is the instantaneous utilisation (Matthiessen's rule with wear coefficient $\kappa$):
+Memory nodes in Quasar carry a coherence budget that erodes with use. Idealised dephasing imposes the transverse Pauli eigenvalues $\lambda_x(t) = \lambda_y(t) = e^{-t/T_2}$ (the longitudinal eigenvalue $\lambda_z$ is governed by $T_1$); Quasar makes $T_2$ itself a function of accumulated operational duty cycle $D(t) = \int_0^t u(t')\,\mathrm{d}t'$, where $u$ is the instantaneous utilisation:
 
 ```math
-\frac{1}{T_2\!\bigl(D\bigr)} = \frac{1}{T_2^{(0)}} + \kappa\,D(t), \qquad \gamma_\phi(t) = \frac{1}{2\,T_2(t)} - \frac{1}{2\,T_1} \tag{18}
+\frac{1}{T_2\!\bigl(D\bigr)} = \frac{1}{T_2^{(0)}} + \kappa\,D(t), \qquad \frac{1}{T_2} = \frac{1}{2\,T_1} + \frac{1}{T_\phi} \tag{18}
 ```
 
-with $T_2^{(0)}$ the as-calibrated coherence time. The dephasing law and $T_1/T_2$ parameterisation are standard [[1]](#ref-1) [[6]](#ref-6); the duty-cycle wear term $\kappa D$ is Quasar's own engineering heuristic, calibrated rather than derived — hence the phenomenological tag.
+with $T_2^{(0)}$ the as-calibrated coherence time. The second identity is the standard relation linking $T_2$, $T_1$, and the pure-dephasing time $T_\phi$ [[1]](#ref-1); it is exact and included so the wear law has an unambiguous effect on the dephasing channel. The dephasing eigenvalue form and $T_1/T_2/T_\phi$ decomposition are standard [[1]](#ref-1) [[6]](#ref-6); the duty-cycle wear term $\kappa D$ is Quasar's own engineering heuristic, calibrated rather than derived — hence the phenomenological tag.
 
 > See [aging.md](aging.md) for implementation details. Note the **discrepancy** in §Known discrepancies below: the code uses a different functional form.
 
@@ -193,7 +181,7 @@ with $T_2^{(0)}$ the as-calibrated coherence time. The dephasing law and $T_1/T_
 The control plane runs as an asynchronous discrete-event process. Congestion in the classical signalling layer — routing churn, packet jitter, queueing delay $W(t)$ — lengthens the time a quantum memory must hold its state before a gate or swap can be scheduled. Quasar couples the two planes through an effective hold time:
 
 ```math
-\tau_{\mathrm{hold}}(t) = \tau_{\mathrm{base}} + W(t) \quad\Longrightarrow\quad \lambda_z = \exp\!\bigl(-\tau_{\mathrm{hold}}(t)/T_2(t)\bigr) \tag{19}
+\tau_{\mathrm{hold}}(t) = \tau_{\mathrm{base}} + W(t) \quad\Longrightarrow\quad \lambda_x,\lambda_y = \exp\!\bigl(-\tau_{\mathrm{hold}}(t)/T_2(t)\bigr) \tag{19}
 ```
 
 This is a structural coupling within the twin rather than a fundamental physical law; it is included to capture a failure mode that stationary-channel simulators cannot express.
@@ -214,15 +202,16 @@ with bond dimension $\chi$ controlling the retained correlations. Singular-value
 
 ---
 
-## Known discrepancies between this document and existing docs
+## Known discrepancies between the whitepaper and the code
 
-The table below records places where the whitepaper (`quasar_physics.tex`) and the per-topic Markdown files diverge. Neither is necessarily wrong — the code may have deliberately adopted a different model. The discrepancies are recorded here for auditability.
+The table below records places where the whitepaper (`quasar_physics.tex`) and the shipped code diverge. The per-topic Markdown files ([`aging.md`](aging.md), [`raman.md`](raman.md), [`channel_model.md`](channel_model.md), [`nonmarkovian.md`](nonmarkovian.md)) have been updated to match the whitepaper; the entries below track what remains to be reconciled in `src/qndt/physics/`.
 
-| # | Topic | Whitepaper (this document) | Existing per-topic file | Notes |
-|---|-------|---------------------------|-------------------------|-------|
-| 1 | Aging model form | Eq (18): $\tfrac{1}{T_2(D)} = \tfrac{1}{T_2^{(0)}} + \kappa D(t)$ — Matthiessen's rule, duty-cycle integral $D = \int u\,\mathrm{d}t$ | [`aging.md`](aging.md) and code: $T_2(N) = T_2^{(0)} e^{-N/N_c}$ — exponential decay indexed by discrete op-count $N$ | Distinct functional forms. Matthiessen (additive, continuous) vs. exponential (multiplicative, discrete). |
-| 2 | Raman cross-section symbol | Eqs (14)–(16): $\rho(\Delta\nu)$ — cross-section per unit length per unit bandwidth at frequency offset $\Delta\nu$ | [`raman.md`](raman.md): notation $\beta(\lambda_c, \lambda_q)$ | Same physical quantity; different symbols and argument conventions. |
-| 3 | Exponential kernel normalisation | Eq (8): $K(\tau) = \tfrac{1}{\tau_c}\,e^{-\tau/\tau_c}\,\Theta(\tau)$ — normalised ($\int_0^\infty K\,\mathrm{d}\tau = 1$) | [`channel_model.md`](channel_model.md): kernel written without $1/\tau_c$ prefactor | The missing prefactor changes the integral's physical dimensions; omitting it effectively folds $\tau_c$ into $\mathbf{S}$. |
+| # | Topic | Whitepaper | Code (`src/qndt/physics/`) | Notes |
+|---|-------|-----------|---------------------------|-------|
+| 1 | Aging — T₂ wear law | Eq (18): $\frac{1}{T_2(D)} = \frac{1}{T_2^{(0)}} + \kappa D(t)$, $D = \int u\,\mathrm{d}t$ — Matthiessen's rule, continuous duty-cycle integral | `aging.py`: $T_2(N) = T_2^{(0)}\,e^{-N/N_c}$ — exponential decay indexed by discrete cumulative op-count $N$ | Distinct functional forms. `aging.md` now matches the whitepaper; code not yet updated. |
+| 2 | Aging — gate overrotation drift | Not covered | `aging.py`: $\varepsilon(t) = \varepsilon_0 + \kappa_{\mathrm{drift}}\,t$ — linear drift since last calibration | Implementation extension; no contradiction with whitepaper physics. |
+| 3 | Raman — cross-section model | Eq (16): V-shaped law $C_{\mathrm{R}}(\Delta\nu) = C_0 + \beta_{\mathrm{S/AS}}|\Delta\nu|$ — continuous, frequency-offset parameterised | `raman.py`: discrete lookup table $\beta(\lambda_c, \lambda_q)$ at calibrated wavelength pairs with linear interpolation | Same physical quantity; different parameterisation. Table values calibrated against Eraerds et al. (2010). |
+| 4 | Raman — optical filter term | Eq (17): $p_{\mathrm{R}} = \frac{\eta\,\Delta t}{h\nu}\,P_{\mathrm{R}}$ — no $T_{\mathrm{opt}}$ factor | `raman.py`: rate formula includes $\eta_{\mathrm{det}} \cdot T_{\mathrm{opt}}$ | Implementation extension accounting for imperfect filter/coupling transmission; not in the whitepaper derivation. |
 
 ---
 

@@ -20,16 +20,16 @@ The `L_k` are the Pauli jump operators (X, Y, Z) and `γ_k(t)` are their *canoni
 
 ## RHP Non-Markovianity Witness
 
-The Rivas-Huelga-Plenio (RHP) measure turns the sign-indefinite canonical rates into a single non-negative scalar witness:
+Quasar computes the rate-based divisibility witness (whitepaper §4, Eq 13), which sums the total magnitude of canonical-rate negativity across all three Pauli channels:
 
 ```math
-\mathcal{N}_{\mathrm{RHP}}
-  = \int_{\gamma_k(t)<0} |\gamma_k(t)|\,dt
+\mathcal{N}_{\mathrm{rate}}
+  = \sum_k \int_{\gamma_k(t)<0} \bigl|\gamma_k(t)\bigr|\,\mathrm{d}t
 ```
 
-The integral runs only over the time intervals where at least one canonical rate is negative, accumulating the magnitude of every backflow episode across all three Pauli channels. `N_RHP = 0` is consistent with (though does not strictly prove) Markovian dynamics; `N_RHP > 0` **certifies** information backflow occurred — it is a sufficient, constructive witness, not a heuristic.
+The sum runs over k ∈ {x, y, z}; each integral runs only over time intervals where γ_k(t) < 0. This is the rate-based divisibility witness — not the full RHP entanglement-flow measure I^(E) — but equivalent in the sense that 𝒩_rate > 0 ⟺ ∃k,t: γ_k(t) < 0 ⟺ CP-divisibility fails ⟺ Markovian criterion violated. Its absolute magnitude is on a different scale from I^(E) and must not be compared with entanglement-based measures. `𝒩_rate = 0` is consistent with (but does not prove) Markovian dynamics; `𝒩_rate > 0` **certifies** information backflow occurred — a sufficient, constructive witness.
 
-Quasar's `RHPWitness` computes this online, per link, as each new `CanonicalRates` snapshot arrives: it integrates any negative-`γ` contribution over the interval since the previous snapshot and adds it to a running total, while also recording the simulation time of every positive-to-negative sign change for later inspection.
+Quasar's `RHPWitness` computes this online, per link, as each new `CanonicalRates` snapshot arrives: it integrates any negative-γ contribution over the interval since the previous snapshot and adds it to a running total, also recording the timestamp of every positive-to-negative sign change. The code variable is `N_RHP`; its value equals 𝒩_rate.
 
 ## Reading the Non-Markovian Dashboard
 
