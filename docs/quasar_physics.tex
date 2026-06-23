@@ -1,0 +1,449 @@
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{bm}
+\usepackage{booktabs}
+\usepackage{xcolor}
+\usepackage{microtype}
+\usepackage[colorlinks=true,linkcolor=teal!60!black,citecolor=teal!60!black,urlcolor=teal!60!black]{hyperref}
+\usepackage{enumitem}
+\usepackage{titlesec}
+
+\definecolor{quasarblue}{HTML}{0B5563}
+\definecolor{verified}{HTML}{1B7A43}
+\definecolor{phenom}{HTML}{B26B00}
+\definecolor{architect}{HTML}{6A4C93}
+
+\titleformat{\section}{\large\bfseries\color{quasarblue}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalsize\bfseries\color{quasarblue!85!black}}{\thesubsection}{0.6em}{}
+
+% Status tags that distinguish literature-grounded equations from Quasar's own modelling
+\newcommand{\statusVerified}{\textbf{\color{verified}[\,LITERATURE-GROUNDED\,]}}
+\newcommand{\statusPhenom}{\textbf{\color{phenom}[\,PHENOMENOLOGICAL MODEL\,]}}
+\newcommand{\statusArch}{\textbf{\color{architect}[\,ARCHITECTURAL COUPLING\,]}}
+
+\newcommand{\Tr}{\operatorname{Tr}}
+\newcommand{\dd}{\mathrm{d}}
+\newcommand{\ii}{\mathrm{i}}
+
+\title{\vspace{-1.2cm}\textbf{\color{quasarblue}The Physics of Quasar}\\[2pt]
+\large A Quantum Network Digital Twin: Governing Equations and Their Sources}
+\author{Technical Reference --- Quasar (\texttt{qndt})}
+\date{\today}
+
+\begin{document}
+\maketitle
+\vspace{-0.7cm}
+
+\begin{abstract}
+\noindent Quasar is a Quantum Network Digital Twin (QNDT) that models a fielded quantum
+communication link not as an idealised textbook channel but as a time-varying,
+telemetry-driven cyber-physical asset. This document sets out the mathematical model
+the simulator implements, module by module, and traces each governing equation to its
+source in the open-systems and quantum-communication literature. Throughout, a
+deliberate distinction is drawn between equations that reproduce established, peer-reviewed
+results and equations that are Quasar's own \emph{phenomenological} engineering models.
+The latter are physically motivated but are not, and should not be read as, derivations
+from a single canonical paper. Each module is tagged accordingly. The intent is a
+faithful account of what the simulator computes and why --- not a claim that every line
+of the model is settled physics.
+\end{abstract}
+
+\noindent\textbf{Reading the status tags.}\quad
+\statusVerified{} the equation reproduces a result with a cited primary source.\;
+\statusPhenom{} a physically-motivated model internal to Quasar, calibrated rather than derived.\;
+\statusArch{} a coupling rule defining how subsystems feed one another in the twin.
+
+\section{Scope and design premise}
+Discrete-event quantum-network packages such as NetSquid, SeQUeNCe and QuISP typically
+parameterise the channel as a quasi-stationary object, even where some time-dependence can be
+configured. Quasar's premise is to make non-stationarity primary: the channel is a \emph{stochastic, non-stationary} process whose instantaneous
+error structure is driven by live environmental telemetry (seismic, thermal, wind-induced
+polarisation drift), by classical co-propagating traffic, and by the operational history of
+the hardware. The model therefore rests on five pillars: (i) a Pauli-channel representation
+of single-link noise; (ii) a telemetry-driven, non-Markovian time-varying channel;
+(iii) a classical$\,\to\,$quantum coexistence (Raman) noise engine; (iv) stateful device aging;
+and (v) a tensor-network reduced-order state backend. The sections below treat each in turn.
+
+\section{Single-link noise: the Pauli-channel and its transfer matrix}
+\statusVerified
+
+A quantum channel acting on a density operator $\rho$ is a completely-positive,
+trace-preserving (CPTP) map, expressible in Kraus form \cite{nielsenchuang}
+\begin{equation}
+\Phi(\rho)=\sum_i A_i\,\rho\,A_i^{\dagger},
+\qquad \sum_i A_i^{\dagger}A_i=\mathbb{1}.
+\end{equation}
+Quasar represents each link's noise in the \emph{Pauli Transfer Matrix} (PTM) basis, which
+expresses $\Phi$ as a $d^2\!\times\!d^2$ real matrix in the Pauli basis
+$\{P_j\}$ (with $P_0=\mathbb{1}$ and the $1/d$ prefactor absorbing the basis normalisation),
+$d=2^n$ \cite{ptm_recon}:
+\begin{equation}
+\big(R_{\Phi}\big)_{ij}=\frac{1}{d}\,\Tr\!\big[P_i\,\Phi(P_j)\big],
+\qquad |\Phi(\rho)\rangle\!\rangle = R_{\Phi}\,|\rho\rangle\!\rangle,
+\end{equation}
+where $|\cdot\rangle\!\rangle$ denotes the column-vectorised operator. The PTM is preferred
+because channel \emph{composition becomes matrix multiplication}, and the experimentally
+accessible quantities (visibility / contrast decay) appear directly as its eigenvalues.
+
+For a single-qubit \emph{Pauli channel} --- the workhorse class spanning the depolarising,
+dephasing and bit-flip models --- the map and its eigenrelation read \cite{stt_pauli}
+\begin{equation}
+\Lambda(\rho)=\!\!\sum_{\alpha\in\{0,x,y,z\}}\!\! f_\alpha\,P_\alpha\,\rho\,P_\alpha,
+\qquad \sum_\alpha f_\alpha = 1,
+\qquad \Lambda(P_\alpha)=\lambda_\alpha P_\alpha,\;\; \lambda_0=1 .
+\end{equation}
+The probabilities $f_\alpha$ and the PTM eigenvalues $\lambda_\alpha$ are related by a
+Walsh--Hadamard transform,
+\begin{equation}
+\lambda_x=f_0+f_x-f_y-f_z,\quad
+\lambda_y=f_0-f_x+f_y-f_z,\quad
+\lambda_z=f_0-f_x-f_y+f_z .
+\end{equation}
+Hence the PTM of any Pauli channel is \emph{diagonal},
+\begin{equation}
+\boxed{\;R=\operatorname{diag}(1,\lambda_x,\lambda_y,\lambda_z)\;}
+\end{equation}
+and the composition of two Pauli channels reduces to an element-wise (Hadamard) product of
+their eigenvalues,
+\begin{equation}
+\lambda^{(2\circ1)}_\alpha=\lambda^{(2)}_\alpha\,\lambda^{(1)}_\alpha ,
+\end{equation}
+an $O(1)$, numerically exact operation per Pauli component. This is the algebra Quasar uses
+to compose the noise contributions of consecutive fibre segments and devices along a path.
+
+\section{Telemetry-driven, time-varying channel}
+\statusPhenom{} (structure) / \statusVerified{} (memory-kernel formalism)
+
+The defining novelty of Quasar is that the Pauli rates are not constants but functionals of
+an environmental state vector $\bm{E}(t)$ (e.g.\ temperature, strain, wind-loading proxies).
+The instantaneous Pauli-rate vector $\bm{p}(t)=(p_x,p_y,p_z)$ is obtained by convolving the
+environmental drive against a memory kernel and passing the result through a link function
+$\Phi_{\mathrm{link}}$:
+\begin{equation}
+\boxed{\;\bm{p}(t)=\Phi_{\mathrm{link}}\!\left(\int_{-\infty}^{t}
+\mathbf{K}(t-t')\,\mathbf{S}\,\bm{E}(t')\,\dd t'\right).\;}
+\end{equation}
+Here $\mathbf{S}$ is a \emph{sensitivity matrix} mapping physical environmental channels onto
+Pauli-stress axes, and $\mathbf{K}$ is a matrix of memory kernels. The structure of this
+equation --- and the matrix $\mathbf{S}$ in particular --- is Quasar's own modelling choice.
+The shipped default values of $\mathbf{S}$ are physically-motivated \emph{illustrative} figures,
+not measurements from a real fibre link: no field calibration data, literature citation, or
+derivation underpins their magnitudes.  They are chosen to produce a legible demonstration
+QBER at $20\,^\circ\mathrm{C}$ Celsius with the normalised kernel; note that the temperature
+channel couples to the \emph{absolute} Celsius value, not to a $\Delta T$, so the resulting
+QBER depends on the temperature-scale origin rather than on a physical drift.  The sensitivity
+structure is tagged phenomenological for that reason.
+What \emph{is} literature-grounded is the kernel formalism: a present-time response that depends
+on the integrated past is the hallmark of \emph{non-Markovian} dynamics
+\cite{breuerbook,rhp2014}. Quasar ships three standard kernel shapes, each multiplied by a
+normalisation constant fixed so that $\int_0^{\infty}K(\tau)\,\dd\tau=1$:
+\begin{align}
+\text{Exponential:}\quad & K(\tau)=\frac{1}{\tau_c}\,e^{-\tau/\tau_c}\,\Theta(\tau),\\
+\text{Damped oscillatory (Lorentzian spectrum):}\quad & K(\tau)=\mathcal{N}_{\!L}\,e^{-\gamma\tau}\cos(\Omega\tau)\,\Theta(\tau),\\
+\text{Gaussian (one-sided):}\quad & K(\tau)=\mathcal{N}_{\!G}\,e^{-\tau^2/2\sigma^2}\,\Theta(\tau),
+\end{align}
+with $\Theta$ the Heaviside step enforcing causality and
+$\mathcal{N}_{\!L}=(\gamma^2+\Omega^2)/\gamma$, $\mathcal{N}_{\!G}=\sqrt{2/\pi\sigma^2}$ the
+half-line normalisation constants. (The exponential kernel is already unit-area, so its
+constant is unity.) The second kernel is named for its \emph{Lorentzian spectral density}, not
+its time-domain shape; the time-domain form is a damped oscillation. The exponential kernel
+recovers the memoryless (Markovian) limit as $\tau_c\!\to\!0$; the damped-oscillatory kernel
+admits information back-flow through its sign changes; the Gaussian models a finite,
+smoothly-windowed memory. The precise parameterisation and normalisation convention should be
+matched against the shipped \texttt{kernels.py} rather than assumed from these forms.
+
+\section{Open-system dynamics: TCL master equation and the non-Markovianity witness}
+\statusVerified
+
+When a full density-matrix evolution is required rather than a static Pauli map, Quasar
+integrates a time-local (time-convolutionless, TCL) master equation in
+Gorini--Kossakowski--Sudarshan--Lindblad (GKSL) form with \emph{time-dependent} rates
+\cite{lindblad1976,gks1976,breuerbook}:
+\begin{equation}
+\boxed{\;\dot\rho(t)=-\frac{\ii}{\hbar}\big[H(t),\rho(t)\big]
++\sum_k \gamma_k(t)\!\left(L_k\,\rho\,L_k^{\dagger}
+-\tfrac{1}{2}\big\{L_k^{\dagger}L_k,\rho\big\}\right).\;}
+\end{equation}
+The decisive feature is the sign of the canonical rates $\gamma_k(t)$. The map is
+CP-divisible --- i.e.\ Markovian in the Rivas--Huelga--Plenio sense --- if and only if
+$\gamma_k(t)\ge 0$ for all $k$ and all $t$. \emph{Temporary negativity} of any
+$\gamma_k(t)$ is the signature of non-Markovian memory and information back-flow from the
+environment to the system \cite{rhp2010,rhp2014}.
+
+\subsection{Quantifying memory: the RHP measure and Quasar's online witness}
+Rivas, Huelga and Plenio define Markovian dynamics as a CP-divisible family of propagators
+obeying the composition law $\mathcal{E}_{(t_2,t_0)}=\mathcal{E}_{(t_2,t_1)}\mathcal{E}_{(t_1,t_0)}$,
+which holds \emph{if and only if} the time-local generator can be written in the standard form
+above with all canonical rates $\gamma_k(t)\ge 0$ \cite{rhp2010}. Their tomography-free measure
+quantifies the resulting non-monotonicity of system--ancilla entanglement. For a system
+initially maximally entangled with a shielded ancilla, $\rho_{SA}(t_0)=|\Phi\rangle\!\langle\Phi|$,
+and an entanglement measure $E$, it reads \cite{rhp2010}
+\begin{equation}
+\mathcal{I}^{(E)}=\int_{t_0}^{t_{\max}}\left|\frac{\dd E[\rho_{SA}(t)]}{\dd t}\right|\dd t
+-\Delta E,
+\qquad \Delta E = E[\rho_{SA}(t_0)]-E[\rho_{SA}(t_{\max})],
+\end{equation}
+which vanishes when the entanglement decays monotonically (Markovian case) and is strictly
+positive whenever entanglement is transiently regained.
+
+Quasar's generator is constructed directly in time-local form, so it has access to the
+canonical rates themselves and does not perform ancilla tomography. It therefore reports a
+\emph{rate-based divisibility witness},
+\begin{equation}
+\boxed{\;\mathcal{N}_{\mathrm{rate}}=\sum_k\int_{\gamma_k(t)<0}\big|\gamma_k(t)\big|\,\dd t,
+\qquad \mathcal{N}_{\mathrm{rate}}>0 \;\Longleftrightarrow\; \exists\,k,t:\;\gamma_k(t)<0,\;}
+\end{equation}
+i.e.\ a violation of CP-divisibility and hence of Markovianity in the RHP sense. This is the
+quantity the simulator displays. It must be read for what it is: an internal Quasar diagnostic
+built on the RHP divisibility \emph{criterion}, not a numerical reconstruction of
+$\mathcal{I}^{(E)}$, and its absolute magnitude is not on the same scale as the
+entanglement-based measure. A trace-distance diagnostic following Breuer--Laine--Piilo
+\cite{blp2009} is also available where only state-level (non-tomographic) data exist. Fast
+thermal transients and seismic events are the physical triggers that drive $\gamma_k(t)$
+negative in the model.
+
+\section{Classical$\,\to\,$quantum coexistence: the Raman interference engine}
+\statusVerified
+
+When the quantum channel shares fibre with classical WDM traffic, spontaneous Raman
+scattering (SpRS) of the strong classical pump generates broadband in-band photons that are
+spectrally indistinguishable from the single-photon signal and therefore \emph{cannot be
+filtered out} \cite{townsend1997,eraerds2010}. Quasar models the Raman power collected in the
+quantum-channel detection bandwidth $\Delta\lambda$ for the two propagation geometries as
+\cite{dasilva2014,peters2009}
+\begin{align}
+\text{Forward (co-propagating):}\quad & P_{\mathrm{f}}(L)=P_0\,C_{\mathrm{R}}(\Delta\nu)\,\Delta\lambda\,L\,e^{-\alpha L},\\
+\text{Backward (counter-propagating):}\quad & P_{\mathrm{b}}(L)=P_0\,C_{\mathrm{R}}(\Delta\nu)\,\Delta\lambda\,\frac{1-e^{-2\alpha L}}{2\alpha},
+\end{align}
+where $P_0$ is the launched classical power, $L$ the fibre length, $\alpha$ the attenuation
+coefficient (taken equal at the pump and scattered wavelengths --- the standard approximation),
+and $C_{\mathrm{R}}(\Delta\nu)$ the SpRS cross-section per unit length per unit bandwidth
+at frequency offset $\Delta\nu$ between the classical and quantum channels. Near the quantum
+channel $C_{\mathrm{R}}$ is well approximated by a V-shaped linear law with distinct Stokes /
+anti-Stokes slopes \cite{dasilva2014},
+\begin{equation}
+C_{\mathrm{R}}(\Delta\nu)\simeq
+\begin{cases}
+C_0+\beta_{\mathrm{S}}\,|\Delta\nu|, & \nu_{\mathrm{cl}}>\nu_{\mathrm{q}} \;(\text{Stokes}),\\[2pt]
+C_0+\beta_{\mathrm{AS}}\,|\Delta\nu|, & \nu_{\mathrm{cl}}<\nu_{\mathrm{q}} \;(\text{anti-Stokes}).
+\end{cases}
+\end{equation}
+For $M$ active classical channels the contributions add incoherently,
+$P_{\mathrm{R}}=\sum_{m=1}^{M}P^{(m)}$. The collected Raman power is then converted into a mean
+induced detector count per gate of length $\Delta t$ at detection efficiency $\eta$, with
+$h\nu$ the quantum-channel photon energy (this mean equals a per-gate click probability in the
+relevant regime $p_{\mathrm{R}}\ll 1$),
+\begin{equation}
+\boxed{\;p_{\mathrm{R}}=\frac{\eta\,\Delta t}{h\nu}\,P_{\mathrm{R}},\qquad
+Y_0 = 2\,p_{\mathrm{dark}}+p_{\mathrm{R}},\;}
+\end{equation}
+so that classical traffic raises the effective background floor $Y_0$ that feeds directly into
+the link's QBER and secure-key-rate estimates \cite{eraerds2010}. Quasar models a
+BB84-style dual-detector receiver: the two single-photon detectors contribute independent
+intrinsic dark counts, hence the $2\,p_{\mathrm{dark}}$ multiplicity, whereas the Raman term
+$p_{\mathrm{R}}$ enters once, since an incident Raman photon is a single photon registering on
+one detector arm. (A single-detector or single-arm receiver would instead use
+$Y_0=p_{\mathrm{dark}}+p_{\mathrm{R}}$.) This is the mechanism by which a busy classical fibre
+silently degrades a co-existing quantum channel.
+
+\section{Stateful device aging and imperfect calibration}
+\statusPhenom
+
+Memory nodes in Quasar carry a coherence budget that \emph{erodes with use}. Idealised
+dephasing imposes the transverse Pauli eigenvalues $\lambda_x(t)=\lambda_y(t)=e^{-t/T_2}$
+(the longitudinal eigenvalue $\lambda_z$ is governed by $T_1$); Quasar makes $T_2$ itself a
+function of accumulated operational duty cycle $D(t)=\int_0^t u(t')\,\dd t'$, where $u$ is the
+instantaneous utilisation:
+\begin{equation}
+\boxed{\;\frac{1}{T_2\!\big(D\big)}=\frac{1}{T_2^{(0)}}+\kappa\,D(t),\qquad
+\frac{1}{T_2}=\frac{1}{2T_1}+\frac{1}{T_\phi}.\;}
+\end{equation}
+The second identity is the standard relation linking the coherence time $T_2$, the
+relaxation time $T_1$ and the pure-dephasing time $T_\phi$ \cite{nielsenchuang}; it is exact
+and is included so the wear law has an unambiguous effect on the dephasing channel. The
+\emph{form} of the dephasing eigenvalue and this $T_1/T_2/T_\phi$ decomposition are standard.
+The duty-cycle wear term $\kappa\,D$, by contrast, is Quasar's own engineering heuristic ---
+calibrated against device logs, not derived --- which is why the module as a whole carries the
+phenomenological tag. Imperfect calibration is modelled by sampling the as-built parameters
+$(T_2^{(0)},T_1,\eta,\dots)$ from device-specific tolerance distributions rather than fixing
+them at nominal values.
+
+\section{Classical--quantum control-plane desynchronisation}
+\statusArch
+
+The control plane runs as an asynchronous discrete-event process. Congestion in the classical
+signalling layer --- routing churn, packet jitter, queueing delay $W(t)$ --- lengthens the
+time a quantum memory must hold its state before a gate or swap can be scheduled. Quasar
+couples the two planes through an effective hold time,
+\begin{equation}
+\tau_{\mathrm{hold}}(t)=\tau_{\mathrm{base}}+W(t)\quad\Longrightarrow\quad
+\lambda_x,\lambda_y=\exp\!\big(-\tau_{\mathrm{hold}}(t)/T_2(t)\big),
+\end{equation}
+so that classical-network pathology propagates into quantum-state degradation. This is a
+structural coupling within the twin rather than a fundamental physical law; it is included to
+capture a failure mode that stationary-channel simulators cannot express.
+
+\section{Reduced-order state backend: matrix-product density operators}
+\statusVerified
+
+Tracking a global density matrix costs $O(d^{2N})$ for $N$ nodes and is intractable at network
+scale. Quasar's state backend instead represents the joint density operator as a
+\emph{matrix-product density operator} (MPDO)
+\cite{schollwock2011,weimer2021},
+\begin{equation}
+\rho=\sum_{\{i_n,j_n\}} M_1^{i_1 j_1}\,M_2^{i_2 j_2}\cdots M_N^{i_N j_N}\;
+|i_1\cdots i_N\rangle\langle j_1\cdots j_N|,
+\end{equation}
+with bond dimension $\chi$ controlling the retained correlations. Singular-value truncation at
+each bond keeps $\chi$ bounded, reducing the cost from exponential to
+$O\!\big(N\chi^3 d^2\big)$ while preserving the trace and Hermiticity of $\rho$
+\cite{jarkovsky2020}. Positive-semidefiniteness, by contrast, is guaranteed by construction
+only in the locally-purified variant (LPTN); plain MPDO truncation can in principle introduce
+small negative eigenvalues, so Quasar monitors the minimum eigenvalue as a validity check. The
+exact prefactor and power of $\chi$ are operation-dependent; the
+load-bearing point is that the cost grows linearly in $N$ and polynomially (rather than
+exponentially) in the retained bond dimension. Accuracy is therefore tunable: $\chi$ trades
+fidelity against speed, and the truncation error is the discarded singular weight, which
+Quasar can report alongside each evolution step.
+
+\section{Validation status and epistemic scope}
+This document describes the model Quasar is \emph{designed} to implement; it is not a
+certificate that the shipped code is free of deviation from these equations. Two honesty
+caveats follow directly from that distinction. First, the literature-grounded modules
+(Pauli-channel algebra, the GKSL/TCL master equation, the RHP non-Markovianity measure, the
+SpRS power laws, the MPDO backend) can be checked line-by-line against their primary sources
+and against analytic limiting cases --- and should be. Second, the phenomenological modules (the
+sensitivity matrix $\mathbf{S}$, the duty-cycle wear law, the control-plane coupling) are
+physically motivated and internally consistent, but their default numerical values are
+\emph{illustrative} rather than empirically calibrated: no field telemetry, literature
+measurement, or formal derivation underpins the specific numbers in $\mathbf{S}$.
+A rigorous audit therefore verifies the first class against citations and derives the
+second class from measured fibre data, reporting any gap explicitly rather than asserting
+global correctness.
+
+Every reference in the bibliography below has been verified against the publisher's record
+(APS, IOP, Springer, AIP and equivalent) for authorship, venue, volume and year; several were
+checked against the primary text directly. Independently, the load-bearing algebra of this
+document --- the diagonality of the Pauli-channel transfer matrix and its eigenvalues, the
+dephasing eigenvalue assignment ($\lambda_x=\lambda_y=e^{-t/T_2}$ with $\lambda_z$ governed by
+$T_1$), channel composition as a Hadamard product, the forward/backward Raman power integrals,
+and the kernel normalisation constants --- has been re-derived by independent symbolic
+computation and confirmed (Appendix~A). Where an equation is standard but its exact
+normalisation or sign convention is implementation-dependent --- the memory-kernel
+normalisation and the dephasing-rate bookkeeping --- the text says so and defers to the shipped
+code as ground truth. The receiver model is fixed by design as a BB84-style dual-detector
+configuration ($Y_0=2\,p_{\mathrm{dark}}+p_{\mathrm{R}}$); the shipped code must match this
+rather than the single-detector form. No equation in this document should be read as a
+claim about the running implementation that has not itself been checked against the
+corresponding module.
+
+\appendix
+\section{Independent symbolic verification}
+The identities below were checked by computer algebra (\texttt{sympy}/\texttt{numpy}); all
+passed exactly (not merely numerically to tolerance, except where a numerical example is noted).
+
+\begin{enumerate}[itemsep=2pt,topsep=2pt,leftmargin=1.5em]
+\item \textbf{PTM diagonality.} For a generic single-qubit Pauli channel
+$\Lambda(\rho)=\sum_\alpha f_\alpha P_\alpha\rho P_\alpha$, the matrix
+$(R)_{ij}=\tfrac{1}{d}\Tr[P_i\Lambda(P_j)]$ is diagonal, $R=\mathrm{diag}(1,\lambda_x,\lambda_y,\lambda_z)$.
+\item \textbf{Walsh--Hadamard eigenvalues.} The formulas
+$\lambda_x=f_0+f_x-f_y-f_z$ (and cyclic) reproduce the computed PTM diagonal exactly.
+\item \textbf{Dephasing assignment.} The phase-flip channel ($f_0=1-p,\,f_z=p$) yields
+$\lambda_x=\lambda_y=1-2p$ (the transverse coherence, $\to e^{-t/T_2}$) and $\lambda_z=1$,
+confirming that $T_2$ decay attaches to $\lambda_x,\lambda_y$ --- not $\lambda_z$.
+\item \textbf{Composition.} For two Pauli channels, $\mathrm{diag}(R_2R_1)=\mathrm{diag}(R_2)\odot\mathrm{diag}(R_1)$
+(Hadamard product).
+\item \textbf{Raman integrals.} The distributed-scattering integrals reduce to the document's
+closed forms,
+\begin{align*}
+P_{\mathrm{f}}(L) &= P_0\,C\,\Delta\lambda\!\int_0^L e^{-\alpha z}\,e^{-\alpha(L-z)}\,\dd z = P_0\,C\,\Delta\lambda\,L\,e^{-\alpha L},\\
+P_{\mathrm{b}}(L) &= P_0\,C\,\Delta\lambda\!\int_0^L e^{-2\alpha z}\,\dd z
+= P_0\,C\,\Delta\lambda\,\tfrac{1-e^{-2\alpha L}}{2\alpha}.
+\end{align*}
+\vspace{-0.3em}
+\item \textbf{Kernel normalisations.}
+\begin{align*}
+\int_0^\infty e^{-\gamma\tau}\cos(\Omega\tau)\,\dd\tau=\frac{\gamma}{\gamma^2+\Omega^2}
+&\;\Rightarrow\; \mathcal{N}_L=\frac{\gamma^2+\Omega^2}{\gamma},\\
+\int_0^\infty e^{-\tau^2/2\sigma^2}\,\dd\tau=\sigma\sqrt{\pi/2}
+&\;\Rightarrow\; \mathcal{N}_G=\sqrt{2/\pi\sigma^2}.
+\end{align*}
+\end{enumerate}
+These checks confirm the internal algebra of the document. They do not certify the shipped
+code; that requires the per-module audit described in \S9.
+
+\begin{thebibliography}{99}
+\setlength{\itemsep}{2pt}
+
+\bibitem{nielsenchuang} M.~A. Nielsen and I.~L. Chuang,
+\emph{Quantum Computation and Quantum Information}, 10th Anniversary Ed.
+(Cambridge University Press, 2010).
+
+\bibitem{ptm_recon} S.~Roncallo, L.~Maccone and C.~Macchiavello,
+``Pauli transfer matrix direct reconstruction: channel characterization without process
+tomography,'' \emph{Quantum Sci. Technol.} \textbf{9}, 015010 (2024); arXiv:2212.11968.
+PTM/Pauli--Liouville definition $(R_\Phi)_{ij}=\tfrac{1}{d}\Tr[P_i\,\Phi(P_j)]$ used here.
+
+\bibitem{stt_pauli} Y.-Q. Chen, Y.-C. Zheng, S.~Zhang and C.-Y. Hsieh,
+``Spectral-transfer-tensor method for characterizing non-Markovian noise,''
+\emph{Phys. Rev. Applied} \textbf{17}, 064007 (2022); arXiv:2012.10094.
+One-qubit Pauli channel and its eigenvalue decomposition used here.
+
+\bibitem{lindblad1976} G.~Lindblad, ``On the generators of quantum dynamical semigroups,''
+\emph{Commun. Math. Phys.} \textbf{48}, 119--130 (1976).
+
+\bibitem{gks1976} V.~Gorini, A.~Kossakowski and E.~C.~G. Sudarshan,
+``Completely positive dynamical semigroups of $N$-level systems,''
+\emph{J. Math. Phys.} \textbf{17}, 821--825 (1976).
+
+\bibitem{breuerbook} H.-P. Breuer and F.~Petruccione,
+\emph{The Theory of Open Quantum Systems} (Oxford University Press, 2002).
+
+\bibitem{rhp2010} \'A.~Rivas, S.~F. Huelga and M.~B. Plenio,
+``Entanglement and non-Markovianity of quantum evolutions,''
+\emph{Phys. Rev. Lett.} \textbf{105}, 050403 (2010).
+
+\bibitem{rhp2014} \'A.~Rivas, S.~F. Huelga and M.~B. Plenio,
+``Quantum non-Markovianity: characterization, quantification and detection,''
+\emph{Rep. Prog. Phys.} \textbf{77}, 094001 (2014).
+
+\bibitem{blp2009} H.-P. Breuer, E.-M. Laine and J.~Piilo,
+``Measure for the degree of non-Markovian behavior of quantum processes in open systems,''
+\emph{Phys. Rev. Lett.} \textbf{103}, 210401 (2009).
+
+\bibitem{townsend1997} P.~D. Townsend,
+``Simultaneous quantum cryptographic key distribution and conventional data transmission over
+installed fibre using wavelength-division multiplexing,''
+\emph{Electron. Lett.} \textbf{33}, 188--190 (1997).
+
+\bibitem{eraerds2010} P.~Eraerds, N.~Walenta, M.~Legr\'e, N.~Gisin and H.~Zbinden,
+``Quantum key distribution and 1\,Gbps data encryption over a single fibre,''
+\emph{New J. Phys.} \textbf{12}, 063027 (2010).
+
+\bibitem{peters2009} N.~A. Peters, P.~Toliver, T.~E. Chapuran \emph{et al.},
+``Dense wavelength multiplexing of 1550\,nm QKD with strong classical channels in
+reconfigurable networking environments,''
+\emph{New J. Phys.} \textbf{11}, 045012 (2009).
+
+\bibitem{dasilva2014} T.~Ferreira da Silva, G.~B. Xavier, G.~P. Tempor\~ao and
+J.~P. von der Weid, ``Impact of Raman scattered noise from multiple telecom channels on
+fiber-optic quantum key distribution systems,''
+\emph{J. Lightwave Technol.} \textbf{32}, 2332--2339 (2014).
+
+\bibitem{schollwock2011} U.~Schollw\"ock,
+``The density-matrix renormalization group in the age of matrix product states,''
+\emph{Ann. Phys.} \textbf{326}, 96--192 (2011).
+
+\bibitem{weimer2021} H.~Weimer, A.~Kshetrimayum and R.~Or\'us,
+``Simulation methods for open quantum many-body systems,''
+\emph{Rev. Mod. Phys.} \textbf{93}, 015008 (2021).
+
+\bibitem{jarkovsky2020} J.~Guth Jarkovsk\'y, A.~Moln\'ar, N.~Schuch and J.~I. Cirac,
+``Efficient description of many-body systems with matrix product density operators,''
+\emph{PRX Quantum} \textbf{1}, 010304 (2020).
+
+\end{thebibliography}
+
+\end{document}
