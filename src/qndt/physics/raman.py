@@ -7,19 +7,50 @@ shared with other engines.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
 import numpy as np
 
 from qndt.core.context import OpContext
+from qndt.physics.channels import depolarising_ptm
 
 # Physical constants
 _H_JS: float = 6.626e-34   # Planck constant [J·s]
+_K_B: float = 1.381e-23    # Boltzmann constant [J/K]
 _C_MPS: float = 3.0e8       # Speed of light   [m/s]
+_T_DEFAULT_K: float = 300.0  # Default temperature [K]
 
 # Default per-channel filter bandwidth used in the Raman integral
 _DELTA_LAMBDA_NM: float = 1.0   # [nm]
+
+# ---------------------------------------------------------------------------
+# Normalized silica Raman gain spectrum shape  [LITERATURE-GROUNDED]
+# ---------------------------------------------------------------------------
+# g(|Δν|): tabulated from the canonical spontaneous-Raman spectrum of silica
+# fiber in G. P. Agrawal, *Nonlinear Fiber Optics*, 6th ed. (Academic Press,
+# 2019), Fig. 8.1.  The primary vibrational band of amorphous SiO₂ peaks at
+# ≈ 13.2 THz (440 cm⁻¹); values are normalized so that g(13.2 THz) = 1.
+# Values beyond 45 THz are taken as zero; intermediate values are linearly
+# interpolated.  [LITERATURE-GROUNDED]
+_G_FREQ_THZ: np.ndarray = np.array(
+    [0.0, 3.0, 6.0, 9.0, 11.0, 12.5, 13.2, 14.0, 15.0, 18.0,
+     21.0, 24.0, 27.0, 30.0, 33.0, 36.0, 39.0, 42.0, 45.0],
+    dtype=np.float64,
+)
+_G_NORM: np.ndarray = np.array(
+    [0.00, 0.02, 0.07, 0.20, 0.55, 0.92, 1.00, 0.95, 0.85, 0.55,
+     0.35, 0.22, 0.13, 0.08, 0.05, 0.03, 0.015, 0.005, 0.0],
+    dtype=np.float64,
+)
+
+# Calibration: β(1310 nm → 1550 nm) = 4.0 × 10⁻¹¹ 1/(km·nm)
+# Eraerds et al., New J. Phys. 12, 063027 (2010), Table 1.
+# [TAG: absolute scale calibrated]
+_ERAERDS_LAMBDA_C_NM: float = 1310.0
+_ERAERDS_LAMBDA_Q_NM: float = 1550.0
+_ERAERDS_BETA_CAL: float = 4.0e-11  # 1/(km·nm)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,76 +100,134 @@ class FiberParams:
 
 
 class RamanProfile:
-    """Raman cross-section table β(λc, λq) in units of [1/(km·nm)].
+    """Raman cross-section ρ(Δν) for spontaneous Raman scattering in silica fiber.
 
-    Values map ``(lambda_c_nm, lambda_q_nm)`` pairs to the spontaneous Raman
-    scattering coefficient used in the §5.4 power integrals.
+    Implements the frequency-offset profile from Whitepaper §5 eq (16):
+
+    .. code-block:: text
+
+        Δν       = ν_cl − ν_q  [Hz]  (> 0 Stokes, < 0 anti-Stokes)
+        ρ(Δν)    = ρ_peak · g(|Δν|) · A(Δν, T)
+
+    where:
+
+    - ``g(|Δν|)``: normalized silica Raman gain spectrum shape (peak ≈ 13.2 THz);
+      tabulated from Agrawal, *Nonlinear Fiber Optics*, 6th ed. (2019), Fig. 8.1.
+      [LITERATURE-GROUNDED]
+    - ``A(Δν, T)``: Bose–Einstein thermal asymmetry factor
+      (Stokes) ``A = n(|Δν|,T) + 1``, (anti-Stokes) ``A = n(|Δν|,T)``
+      where ``n(|Δν|,T) = 1/(exp(h|Δν|/kT) − 1)``.
+      (Boyd, *Nonlinear Optics*, 4th ed. (2020), §10.2.)
+    - ``ρ_peak`` [1/(km·nm)]: absolute scale; calibrated so that at the
+      1310 nm → 1550 nm Stokes offset (Δν ≈ 35.4 THz, T = 300 K) the model
+      reproduces β ≈ 4×10⁻¹¹ 1/(km·nm) from Eraerds et al. (2010).
+      [TAG: absolute scale calibrated]
+
+    The public interface ``beta(lambda_c_nm, lambda_q_nm) -> float`` is preserved
+    for backward compatibility with ``CoexistenceNoiseEngine``.
 
     Args:
-        profile_table: Dict keyed by ``(lambda_c_nm, lambda_q_nm)`` pairs.
+        rho_peak: Peak cross-section ρ_peak in [1/(km·nm)].
+        temperature_k: Fiber temperature for Bose–Einstein factor; default 300 K.
+
+    Raises:
+        ValueError: If ``rho_peak`` ≤ 0 or ``temperature_k`` ≤ 0.
     """
 
-    def __init__(self, profile_table: dict[tuple[float, float], float]) -> None:
-        self._table: dict[tuple[float, float], float] = dict(profile_table)
+    def __init__(self, rho_peak: float, temperature_k: float = _T_DEFAULT_K) -> None:
+        if rho_peak <= 0.0:
+            raise ValueError(f"rho_peak must be > 0; got {rho_peak}")
+        if temperature_k <= 0.0:
+            raise ValueError(f"temperature_k must be > 0; got {temperature_k}")
+        self._rho_peak = rho_peak
+        self._temperature_k = temperature_k
+
+    @property
+    def rho_peak(self) -> float:
+        """Absolute scale ρ_peak [1/(km·nm)]. [TAG: absolute scale calibrated]"""
+        return self._rho_peak
+
+    @property
+    def temperature_k(self) -> float:
+        """Fiber temperature used for Bose–Einstein factor [K]."""
+        return self._temperature_k
+
+    def _gain_shape(self, abs_delta_nu_hz: float) -> float:
+        """Interpolate normalized Raman gain profile g at |Δν|.
+
+        Args:
+            abs_delta_nu_hz: Frequency offset magnitude |Δν| in Hz.
+
+        Returns:
+            Normalized gain g(|Δν|) ∈ [0, 1].
+        """
+        return float(np.interp(abs_delta_nu_hz / 1e12, _G_FREQ_THZ, _G_NORM))
+
+    def _bose_einstein_n(self, abs_delta_nu_hz: float) -> float:
+        """Bose–Einstein mean occupation n(|Δν|, T) = 1/(exp(h|Δν|/kT) − 1).
+
+        Args:
+            abs_delta_nu_hz: Frequency offset magnitude |Δν| in Hz.
+
+        Returns:
+            Occupation number n ≥ 0.
+        """
+        if abs_delta_nu_hz < 1e9:
+            return 1e6  # near-DC limit; n → ∞
+        x = _H_JS * abs_delta_nu_hz / (_K_B * self._temperature_k)
+        return 1.0 / math.expm1(x)
 
     def beta(self, lambda_c_nm: float, lambda_q_nm: float) -> float:
-        """Return the Raman cross-section β(λc, λq) in [1/(km·nm)].
+        """Return ρ(Δν) in [1/(km·nm)] for classical/quantum wavelength pair.
 
-        Checks for an exact table entry first; otherwise finds the nearest
-        ``lambda_c_nm`` entry in the table and linearly interpolates in
-        ``lambda_q_nm``.
+        Computes the SpRS cross-section at frequency offset
+        ``Δν = ν_cl − ν_q = c/λ_cl − c/λ_q``:
+
+        ``ρ(Δν) = ρ_peak · g(|Δν|) · A(Δν, T)``
+
+        Stokes (λ_cl < λ_q, Δν > 0): A = n(|Δν|, T) + 1
+        anti-Stokes (λ_cl > λ_q, Δν < 0): A = n(|Δν|, T)
 
         Args:
             lambda_c_nm: Classical pump wavelength in nm.
             lambda_q_nm: Quantum signal wavelength in nm.
 
         Returns:
-            Raman cross-section in [1/(km·nm)].
+            Raman cross-section ρ(Δν) in [1/(km·nm)].
         """
-        key = (lambda_c_nm, lambda_q_nm)
-        if key in self._table:
-            return self._table[key]
+        nu_cl = _C_MPS / (lambda_c_nm * 1e-9)
+        nu_q = _C_MPS / (lambda_q_nm * 1e-9)
+        delta_nu = nu_cl - nu_q
 
-        # Nearest lambda_c in table.
-        c_values = sorted({k[0] for k in self._table})
-        nearest_c = min(c_values, key=lambda c: abs(c - lambda_c_nm))
+        g = self._gain_shape(abs(delta_nu))
+        n = self._bose_einstein_n(abs(delta_nu))
+        a = (n + 1.0) if delta_nu > 0.0 else n
 
-        # All (lambda_q, beta) pairs for that lambda_c, sorted by wavelength.
-        q_beta = sorted(
-            ((k[1], v) for k, v in self._table.items() if k[0] == nearest_c)
-        )
-
-        if len(q_beta) == 1:
-            return q_beta[0][1]
-
-        q_vals = [qb[0] for qb in q_beta]
-        b_vals = [qb[1] for qb in q_beta]
-        return float(np.interp(lambda_q_nm, q_vals, b_vals))
+        return self._rho_peak * g * a
 
     @classmethod
-    def smf28_default(cls) -> RamanProfile:
-        """Pre-loaded SMF-28 Raman cross-section table from published measurements.
+    def smf28_default(cls) -> "RamanProfile":
+        """SMF-28 Raman profile calibrated to Eraerds et al. (2010).
 
-        Values are consistent with Eraerds et al., New J. Phys. 12, 063027 (2010),
-        which reports SpRS noise power of order 1e-14 W/nm for 1mW pump at 25km —
-        corresponding to beta ~= 4e-11 1/(km*nm), not 1e-8 (an earlier version of
-        this table was off by ~3 orders of magnitude and produced GHz-scale dark
-        click rates instead of the kHz-MHz range reported in the literature).
+        Calibrates ρ_peak so that β(1310 nm, 1550 nm) = 4×10⁻¹¹ 1/(km·nm),
+        matching Eraerds et al., *New J. Phys.* **12**, 063027 (2010), which
+        reports SpRS noise power of order 10⁻¹⁴ W/nm for a 1 mW pump at 25 km
+        over SMF-28 — implying β ≈ 4×10⁻¹¹ 1/(km·nm).
+
+        The 1310 → 1550 nm pair gives Δν ≈ 35.4 THz (Stokes), which sits on
+        the falling side of the silica Raman peak at ~13.2 THz.  Also cited:
+        da Silva et al., *J. Lightwave Technol.* **32**, 2332 (2014) [ref 13].
+
+        [TAG: absolute scale calibrated]
 
         Returns:
-            ``RamanProfile`` instance pre-loaded with SMF-28 cross-sections.
+            ``RamanProfile`` calibrated to reproduce the Eraerds measurement.
         """
-        table: dict[tuple[float, float], float] = {
-            # 1310 nm classical pump → 1550 nm quantum channel (Stokes tail)
-            (1310.0, 1490.0): 5.2e-11,
-            (1310.0, 1550.0): 4.0e-11,
-            (1310.0, 1610.0): 3.2e-11,
-            # 1550 nm classical pump → 1310 nm quantum channel (anti-Stokes)
-            (1550.0, 1310.0): 3.5e-11,
-            (1550.0, 1450.0): 4.8e-11,
-            (1550.0, 1650.0): 3.7e-11,
-        }
-        return cls(table)
+        # Bootstrap: unit-peak profile to read the profile value at cal. point
+        unit = cls(rho_peak=1.0, temperature_k=_T_DEFAULT_K)
+        beta_at_unit = unit.beta(_ERAERDS_LAMBDA_C_NM, _ERAERDS_LAMBDA_Q_NM)
+        rho_peak_cal = _ERAERDS_BETA_CAL / beta_at_unit
+        return cls(rho_peak=rho_peak_cal, temperature_k=_T_DEFAULT_K)
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,12 +261,24 @@ class CoexistenceNoiseEngine:
     returns the diagonal Pauli Transfer Matrix contribution from spontaneous
     Raman scattering photons that register as false detector clicks.
 
+    The live-load path (primary): when a control plane is wired,
+    ``raman_rate()`` calls ``self._control_plane.current_load(link_id, t)``
+    (duck-typed; no import of ``control_plane`` package to avoid the circular
+    dependency — ``control_plane.load`` imports ``ClassicalChannelSpec`` from
+    this module).  The returned ``active_channels`` list is iterated in place of
+    the static ``self._channels`` dict.
+
+    Static fallback: if no control plane is wired, or if the live load has no
+    active channels for the queried link, ``self._channels`` (populated via
+    ``register_channel()``) is used instead.  This preserves standalone and
+    test use without a control plane.
+
     Args:
-        profile: Raman cross-section table for the fiber type.
+        profile: Raman cross-section profile for the fiber type.
         fiber: Physical parameters of the fiber span.
         control_plane: ``AsynchronousControlPlane`` at runtime; typed ``Any``
             to avoid the circular import between physics and control_plane
-            packages (§3.3).  Reserved for future WDM-load queries.
+            packages (§3.3).
 
     Raises:
         KeyError: ``deregister_channel`` raises if the ID is not found.
@@ -216,14 +317,29 @@ class CoexistenceNoiseEngine:
     def raman_rate(self, link_id: str, lambda_q_nm: float, t: float) -> float:
         """Compute the total spontaneous Raman photon rate at the quantum detector.
 
-        Implements §5.4 for all registered classical channels:
+        Implements §5.4.  Channel source (live vs. static):
 
-        ``P_fwd = Pc · β · Δλ · L · exp(-α·L)``
-        ``P_bwd = Pc · β · Δλ · (1 - exp(-2·α·L)) / (2·α)``
+        - **Live path** (CP-managed links): when a control plane is wired
+          **and** ``self._control_plane.manages_link(link_id)`` is ``True``
+          (the link was activated at least once in the ``WDMLoadTracker``),
+          ``current_load().active_channels`` is iterated directly.  An empty
+          list means all channels are off → rate is **0**, not a fallback.
+        - **Static path** (unmanaged links): if no control plane is wired, or
+          the link was never activated (``manages_link`` → ``False``), iterates
+          ``self._channels`` (populated via ``register_channel()``).
+
+        **Rule**: a link is owned by **either** static ``register_channel`` **or**
+        the CP schedule, not both.  Once the CP manages a link, static channels
+        for that link are permanently bypassed.
+
+        Per-channel §5.4 formula unchanged:
+
+        ``P_fwd = Pc · ρ(Δν) · Δλ · L · exp(-α·L)``
+        ``P_bwd = Pc · ρ(Δν) · Δλ · (1 - exp(-2·α·L)) / (2·α)``
         ``rate_c = (P_fwd + P_bwd) · η_det · T_opt / (h · ν_q)``
 
         Args:
-            link_id: Fiber link identifier (reserved for per-link WDM queries).
+            link_id: Fiber link identifier; used to query per-link WDM load.
             lambda_q_nm: Quantum channel wavelength in nm.
             t: Current simulation time in seconds.
 
@@ -235,8 +351,16 @@ class CoexistenceNoiseEngine:
         nu_q = _C_MPS / (lambda_q_nm * 1e-9)
         h_nu_q = _H_JS * nu_q
 
+        # B2 semantics: live path when CP manages link; static dict otherwise.
+        channels: Iterable[ClassicalChannelSpec]
+        if self._control_plane is not None and self._control_plane.manages_link(link_id):
+            load = self._control_plane.current_load(link_id, t)
+            channels = load.active_channels  # empty list → rate 0; no static fallback
+        else:
+            channels = self._channels.values()
+
         total_rate = 0.0
-        for spec in self._channels.values():
+        for spec in channels:
             pc_w = spec.launch_power_mw * 1e-3
             beta = self._profile.beta(spec.lambda_c_nm, lambda_q_nm)
 
@@ -285,10 +409,28 @@ class CoexistenceNoiseEngine:
     def ptm(self, ctx: OpContext) -> np.ndarray:
         """Return the diagonal PTM contribution from Raman dark counts.
 
-        Models Raman false clicks as symmetric X and Z errors on the qubit
-        (photon detection collapses the state):
+        A Raman false click is a spontaneously scattered photon that carries no
+        information about the transmitted qubit state — the registered detection
+        event corresponds to a maximally mixed state ρ → I/2, i.e. the
+        **depolarising channel**:
 
-        ``px = p/2,  py = 0,  pz = p/2``
+        .. code-block:: text
+
+            ρ → (1−p)ρ + p·I/2    ↔    px = py = pz = p/4
+            λ = [1, 1−p, 1−p, 1−p]
+
+        **Isotropic:** An uncorrelated noise photon has no preferred Pauli axis,
+        so px = py = pz = p/4 is the only physically consistent assignment.  The
+        previous symmetric form (px = pz = p/2, py = 0) gave the correct X/Z QBER
+        but arbitrarily excluded Y-errors; depolarising is the principled form.
+
+        **pz-only REJECTED:** A pure-Z assignment gives λz = 1 (zero Z-basis
+        error), contradicting the e₀ = ½ random-bit dark-count model in
+        ``key_rate.py``.  A pz-only error requires a phase/interferometric
+        receiver; the generic η_d / p_dc + e₀ = ½ model is not one.
+
+        Note: λx and λz are identical to the old symmetric model, so the X- and
+        Z-basis QBER contributions are unchanged by this switch.
 
         ``ctx.lambda_q`` is expected in SI metres; ``× 1e9`` converts to nm.
 
@@ -296,15 +438,10 @@ class CoexistenceNoiseEngine:
             ctx: Current operation context.  ``lambda_q`` must be in metres.
 
         Returns:
-            Length-4 diagonal PTM ``[1, λx, λy, λz]``.
+            Length-4 diagonal PTM ``[1, 1−p, 1−p, 1−p]``.
         """
         p = self.effective_dark_prob(
             ctx.link_id, ctx.lambda_q * 1e9, ctx.gate_width, ctx.t
         )
-        # Half the dark-click probability on X and Z; py = 0.
-        half_p = min(p / 2.0, 0.499)
-        # Derive λy from λxz to keep the three λ values internally consistent
-        # and avoid floating-point cancellation in validate_ptm's py recovery.
-        lxz = 1.0 - 2.0 * half_p   # λx = λz = 1 - p
-        ly = 2.0 * lxz - 1.0        # λy = 1 - 2p, consistent with lxz
-        return np.array([1.0, lxz, ly, lxz], dtype=np.float64)
+        p = min(p, 1.0)  # effective_dark_prob already clamps; guard against fp drift
+        return depolarising_ptm(p)

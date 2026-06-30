@@ -1,25 +1,28 @@
 {
-  "scenario_name": "Metro Demo — Illustrative (S values chosen for visibility, NOT calibrated)",
+  "scenario_name": "Metro Demo — Illustrative (S/aging params chosen for visibility, NOT calibrated)",
   "nodes": [
     {
       "node_id": "alice",
       "qubit_index": 0,
-      "t2_nominal": 200.0,
-      "wear_const_nc": 1000000.0,
+      "t2_nominal": 1.0,
+      "t1_nominal": 2.0,
+      "wear_rate_kappa": 0.1,
       "calib_drift_rate": 1e-06
     },
     {
       "node_id": "repeater",
       "qubit_index": 1,
-      "t2_nominal": 200.0,
-      "wear_const_nc": 1000000.0,
+      "t2_nominal": 1.0,
+      "t1_nominal": 2.0,
+      "wear_rate_kappa": 0.1,
       "calib_drift_rate": 1e-06
     },
     {
       "node_id": "bob",
       "qubit_index": 2,
-      "t2_nominal": 200.0,
-      "wear_const_nc": 1000000.0,
+      "t2_nominal": 1.0,
+      "t1_nominal": 2.0,
+      "wear_rate_kappa": 0.1,
       "calib_drift_rate": 1e-06
     }
   ],
@@ -71,18 +74,44 @@
     [0.0, 0.3, 0.0],
     [0.006, 0.0, 0.0015]
   ],
-  "coexistence_channels": [
+  "coexistence_channels": [],
+  "wdm_schedule": [
     {
-      "channel_id": "ch_1310_upstream",
+      "t": 0.0,
+      "link_id": "link_ar",
+      "action": "activate",
+      "channel_id": "ch_1310_up",
       "lambda_c_nm": 1310.0,
-      "launch_power_mw": 1.0,
-      "active": true
+      "launch_power_mw": 1.0
     },
     {
-      "channel_id": "ch_1570_downstream",
+      "t": 0.0,
+      "link_id": "link_rb",
+      "action": "activate",
+      "channel_id": "ch_1310_up",
+      "lambda_c_nm": 1310.0,
+      "launch_power_mw": 1.0
+    },
+    {
+      "t": 5.0,
+      "link_id": "link_ar",
+      "action": "activate",
+      "channel_id": "ch_1570_dn",
       "lambda_c_nm": 1570.0,
-      "launch_power_mw": 1.0,
-      "active": true
+      "launch_power_mw": 2.0
+    },
+    {
+      "t": 15.0,
+      "link_id": "link_ar",
+      "action": "update_power",
+      "channel_id": "ch_1570_dn",
+      "launch_power_mw": 4.0
+    },
+    {
+      "t": 20.0,
+      "link_id": "link_ar",
+      "action": "deactivate",
+      "channel_id": "ch_1310_up"
     }
   ],
   "duration_s": 30.0,

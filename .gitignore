@@ -155,7 +155,7 @@ examples/*.png
 
 # Planning / scratch docs (not part of the codebase)
 quasar_roadmap.md
-
+quasar_physics.tex
 # Scenario data (user-generated)
 data/
 *.scenario.json
@@ -174,3 +174,4 @@ data/
 
 # Temporary / diagnostic scripts in root (not part of the codebase)
 diag_dashboard.py
+CLAUDE.MD

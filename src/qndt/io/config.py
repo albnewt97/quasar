@@ -10,9 +10,9 @@ import json
 from typing import TYPE_CHECKING, Literal
 
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-from qndt.core.orchestrator import LinkConfig, NodeConfig, SimulationConfig
+from qndt.core.orchestrator import LinkConfig, NodeConfig, SimulationConfig, WDMScheduleEntry
 from qndt.physics.kernels import (
     ExponentialKernel,
     GaussianKernel,
@@ -125,6 +125,11 @@ class LinkConfigModel(BaseModel):
         qubit_index: Index of the qubit representing this link's state.
         fiber: Fiber physical parameters.
         classical_channels: Raw WDM channel specs (engine-format dicts).
+        qubit_exposure_s: Per-qubit physical exposure time τ_qubit [s] for
+            QBER estimation (§5.7).  ``None`` (default) computes the fiber
+            propagation delay ``fiber.length_km × 1e3 × n_g / c`` with
+            ``n_g = 1.468`` and ``c = 2.998×10⁸ m/s``.  Override with the
+            memory hold time for quantum-memory / repeater nodes.
     """
 
     link_id: str
@@ -135,6 +140,7 @@ class LinkConfigModel(BaseModel):
     qubit_index: int
     fiber: FiberParamsModel = Field(default_factory=FiberParamsModel)
     classical_channels: list[dict[str, object]] = Field(default_factory=list)
+    qubit_exposure_s: float | None = None
 
 
 class NodeConfigModel(BaseModel):
@@ -143,16 +149,33 @@ class NodeConfigModel(BaseModel):
     Args:
         node_id: Unique node identifier.
         qubit_index: Index of the qubit representing this node's memory.
-        t2_nominal: Initial T2 coherence time at zero operations [s].
-        wear_const_nc: Characteristic operation count for 1/e T2 decay.
+        t2_nominal: Initial T2 coherence time at zero duty cycle [s].
+        wear_rate_kappa: Matthiessen wear rate κ [s⁻²]; 0 means no wear.
         calib_drift_rate: Gate overrotation drift rate [rad/s].
+        t1_nominal: Longitudinal relaxation time T1 [s]; not subject to wear.
+            Must satisfy T2 ≤ 2·T1 (1/T2=1/(2T1)+1/Tφ, Tφ≥0).  Default 2.0 s
+            is an illustrative value consistent with T2=1 s (T1-limited regime).
+            Override per-node in JSON for realistic platform values.
+
+    Raises:
+        ValueError: If ``t2_nominal > 2·t1_nominal`` (violates T2 ≤ 2T1).
     """
 
     node_id: str
     qubit_index: int
     t2_nominal: float = 1.0
-    wear_const_nc: float = 1e6
+    wear_rate_kappa: float = 1e-4
     calib_drift_rate: float = 1e-6
+    t1_nominal: float = 2.0
+
+    @model_validator(mode="after")
+    def _check_t2_le_2_t1(self) -> "NodeConfigModel":
+        if self.t2_nominal > 2.0 * self.t1_nominal * (1.0 + 1e-9):
+            raise ValueError(
+                f"t2_nominal={self.t2_nominal} > 2·t1_nominal={self.t1_nominal}: "
+                "violates 1/T2=1/(2T1)+1/Tφ (T2 ≤ 2T1); Nielsen & Chuang (2010) Ch. 8 [ref 1]"
+            )
+        return self
 
 
 class KernelModel(BaseModel):
@@ -193,6 +216,61 @@ class KernelModel(BaseModel):
         raise ValueError(f"Unknown kernel type: {self.type!r}")
 
 
+class WDMScheduleEventModel(BaseModel):
+    """Pydantic model for a single timed WDM channel event (§3.3 B1).
+
+    Used inside ``ScenarioConfig.wdm_schedule`` to describe an ordered sequence
+    of classical-channel events applied during simulation.  Each event fires at
+    the first step whose simulation time satisfies ``self._t >= t``.
+
+    Args:
+        t: Simulation time [s] at which the event fires.
+        link_id: Fiber link to apply the event on.
+        action: ``"activate"`` | ``"deactivate"`` | ``"update_power"``.
+        channel_id: Classical channel identifier.
+        lambda_c_nm: Centre wavelength [nm]; required for ``"activate"``.
+        launch_power_mw: Launch power [mW]; required for ``"activate"`` and
+            ``"update_power"``.
+
+    Raises:
+        ValueError: If ``launch_power_mw <= 0`` for ``"activate"`` or
+            ``"update_power"`` actions, or if ``lambda_c_nm <= 0`` for
+            ``"activate"``.
+    """
+
+    t: float
+    link_id: str
+    action: Literal["activate", "deactivate", "update_power"]
+    channel_id: str
+    lambda_c_nm: float = 0.0
+    launch_power_mw: float = 0.0
+
+    @model_validator(mode="after")
+    def _check_action_fields(self) -> "WDMScheduleEventModel":
+        if self.action in ("activate", "update_power") and self.launch_power_mw <= 0:
+            raise ValueError(
+                f"launch_power_mw must be > 0 for action {self.action!r}; "
+                f"got {self.launch_power_mw}"
+            )
+        if self.action == "activate" and self.lambda_c_nm <= 0:
+            raise ValueError(
+                f"lambda_c_nm must be > 0 for action 'activate'; "
+                f"got {self.lambda_c_nm}"
+            )
+        return self
+
+    def to_schedule_entry(self) -> WDMScheduleEntry:
+        """Convert to the frozen ``WDMScheduleEntry`` used by the engine."""
+        return WDMScheduleEntry(
+            t=self.t,
+            link_id=self.link_id,
+            action=self.action,
+            channel_id=self.channel_id,
+            lambda_c_nm=self.lambda_c_nm,
+            launch_power_mw=self.launch_power_mw,
+        )
+
+
 class ScenarioConfig(BaseModel):
     """Top-level scenario configuration (§12 JSON scenario format).
 
@@ -204,9 +282,15 @@ class ScenarioConfig(BaseModel):
         sensitivity: 3×M sensitivity matrix S overriding ``S_SMF28_DEFAULT``
             (§5.3).  ``None`` means use the illustrative SMF-28 default (uncalibrated).
         coexistence_channels: Global list of active classical WDM channels
-            (applied to all links).  When non-empty, overrides per-link
-            ``classical_channels``.  Each entry must have ``channel_id``,
-            ``lambda_c_nm``, ``launch_power_mw``, and ``active`` keys.
+            (applied to all links via static registration).  When non-empty,
+            overrides per-link ``classical_channels``.  Each entry must have
+            ``channel_id``, ``lambda_c_nm``, ``launch_power_mw``, and ``active``
+            keys.  **Rule**: do not mix static ``coexistence_channels`` with
+            ``wdm_schedule`` events on the same link — once a link is managed
+            by the CP (via a schedule event), static channels are bypassed (B2).
+        wdm_schedule: Ordered list of timed WDM channel events applied during
+            the run (§3.3 B1).  Events fire at the step when simulation time
+            first equals or exceeds ``event.t``.
         duration_s: Total simulated duration [s].
         dt_s: Simulation time step [s].
         chi_max: Maximum MPDO bond dimension.
@@ -219,6 +303,7 @@ class ScenarioConfig(BaseModel):
     kernel: KernelModel = Field(default_factory=KernelModel)
     sensitivity: list[list[float]] | None = None
     coexistence_channels: list[dict[str, object]] = Field(default_factory=list)
+    wdm_schedule: list[WDMScheduleEventModel] = Field(default_factory=list)
     duration_s: float = 10.0
     dt_s: float = 0.1
     chi_max: int = 4
@@ -234,6 +319,11 @@ class ScenarioConfig(BaseModel):
                 lambda_q_nm=link.lambda_q_nm,
                 gate_width_s=link.gate_width_s,
                 qubit_index=link.qubit_index,
+                qubit_exposure_s=(
+                    link.qubit_exposure_s
+                    if link.qubit_exposure_s is not None
+                    else link.fiber.length_km * 1e3 * 1.468 / 2.998e8
+                ),
             )
             for link in self.links
         )
@@ -293,6 +383,11 @@ class ScenarioConfig(BaseModel):
                 lambda_q_nm=link.lambda_q_nm,
                 gate_width_s=link.gate_width_s,
                 qubit_index=link.qubit_index,
+                qubit_exposure_s=(
+                    link.qubit_exposure_s
+                    if link.qubit_exposure_s is not None
+                    else link.fiber.length_km * 1e3 * 1.468 / 2.998e8
+                ),
             )
             for link in self.links
         ]
@@ -303,7 +398,8 @@ class ScenarioConfig(BaseModel):
         node_aging: dict[str, dict[str, float]] = {
             node.node_id: {
                 "t2_nominal": node.t2_nominal,
-                "wear_const_nc": node.wear_const_nc,
+                "wear_rate_kappa": node.wear_rate_kappa,
+                "t1_nominal": node.t1_nominal,
             }
             for node in self.nodes
         }
@@ -336,6 +432,8 @@ class ScenarioConfig(BaseModel):
             except (KeyError, ValueError, TypeError):
                 pass
 
+        schedule = [ev.to_schedule_entry() for ev in self.wdm_schedule]
+
         return TwinOrchestrator.build_simple(
             n_qubits=n_qubits,
             link_configs=link_configs,
@@ -348,4 +446,5 @@ class ScenarioConfig(BaseModel):
             fiber=fiber,
             wdm_channels=wdm or None,
             node_aging_overrides=node_aging or None,
+            wdm_schedule=schedule or None,
         )

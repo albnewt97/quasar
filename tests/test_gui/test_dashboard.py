@@ -302,12 +302,12 @@ def test_key_rate_clear_resets_all_crosshair_series(qtbot: QtBot) -> None:
 
 
 def test_aging_config_applied(qtbot: QtBot) -> None:
-    """NodePropertiesDialog.get_config() returns t2_nominal and wear_const_nc keys."""
+    """NodePropertiesDialog.get_config() returns t2_nominal and wear_rate_kappa keys."""
     from qndt.gui.topology.node_item import NodePropertiesDialog
 
     dialog = NodePropertiesDialog("n1", "memory_node")
     qtbot.addWidget(dialog)
     cfg = dialog.get_config()
     assert "t2_nominal" in cfg, "get_config() must include t2_nominal"
-    assert "wear_const_nc" in cfg, "get_config() must include wear_const_nc"
+    assert "wear_rate_kappa" in cfg, "get_config() must include wear_rate_kappa"
     assert cfg["node_type"] == "memory_node"

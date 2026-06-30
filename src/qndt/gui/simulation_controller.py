@@ -239,8 +239,8 @@ class SimulationController(QObject):
         for node in node_configs:
             override = self._node_aging_overrides.get(node.node_id, {})
             t2 = override.get("t2_nominal", 1.0)
-            nc = override.get("wear_const_nc", 1e6)
-            self._dashboard.add_node(node.node_id, t2, nc)
+            kappa = override.get("wear_rate_kappa", 1e-4)
+            self._dashboard.add_node(node.node_id, t2, kappa)
 
         return orchestrator
 
@@ -385,7 +385,7 @@ class SimulationController(QObject):
         """Store per-node aging override from NodePropertiesDialog. Applied on next run."""
         self._node_aging_overrides[node_id] = {
             "t2_nominal": float(config.get("t2_nominal", 1.0)),  # type: ignore[arg-type]
-            "wear_const_nc": float(config.get("wear_const_nc", 1e6)),  # type: ignore[arg-type]
+            "wear_rate_kappa": float(config.get("wear_rate_kappa", 1e-4)),  # type: ignore[arg-type]
         }
         self._main_window.statusBar().showMessage(
             f"Aging config updated for {node_id!r} (applies on next run)", 3000
@@ -473,7 +473,7 @@ class SimulationController(QObject):
                 node_id=str(node["node_id"]),
                 qubit_index=cast(int, node["qubit_index"]),
                 t2_nominal=cast(float, aging_cfg["t2_nominal"]),
-                wear_const_nc=cast(float, aging_cfg["wear_const_nc"]),
+                wear_rate_kappa=cast(float, aging_cfg["wear_rate_kappa"]),
                 calib_drift_rate=cast(float, aging_cfg["drift_rate_kappa"]),
             )
             for node in self._topology_model.to_scenario_nodes()
@@ -527,7 +527,7 @@ class SimulationController(QObject):
         if scenario.nodes:
             first_node = scenario.nodes[0]
             self._main_window._aging_panel._t2_nominal.setValue(first_node.t2_nominal)
-            self._main_window._aging_panel._wear_const_nc.setValue(first_node.wear_const_nc)
+            self._main_window._aging_panel._wear_rate_kappa.setValue(first_node.wear_rate_kappa)
             self._main_window._aging_panel._drift_rate.setValue(first_node.calib_drift_rate)
         if scenario.links:
             first_link = scenario.links[0]

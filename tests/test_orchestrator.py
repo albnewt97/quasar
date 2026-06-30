@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
+import pytest
 
 from qndt.control_plane.async_plane import AsynchronousControlPlane
 from qndt.control_plane.load import WDMLoadTracker
@@ -26,6 +27,7 @@ from qndt.io.config import (
     LinkConfigModel,
     NodeConfigModel,
     ScenarioConfig,
+    WDMScheduleEventModel,
     validate_sensitivity_matrix,
 )
 from qndt.physics.aging import DeviceAgingModel
@@ -134,7 +136,7 @@ def test_raman_rate_reported() -> None:
         sensitivity=np.eye(3, 3) * 0.001,
         kernel=ExponentialKernel(tau_x=30.0, tau_y=30.0, tau_z=120.0),
     )
-    aging_model = DeviceAgingModel(t2_nominal=1.0, wear_const_nc=1e6, calib_drift_rate=1e-6)
+    aging_model = DeviceAgingModel(t2_nominal=1.0, wear_rate_kappa=0.0, calib_drift_rate=1e-6)
     tracker = TensorStateTracker(n_sites=1)
 
     config = SimulationConfig(links=(_LINK,), nodes=(_NODE_A,), duration_s=1.0, dt_s=0.1)
@@ -404,20 +406,19 @@ def test_build_orchestrator_custom_differs_from_default() -> None:
         duration_s=1.0,
         dt_s=0.1,
     ).step()[0].qber
-    # Measured gap (ΔT-coupling regime): custom=2.05e-6 < default=2.55e-6
-    # gap ≈ 5.1e-7.  The Lorentzian kernel's oscillatory sign structure produces a
-    # slightly higher lz than the monotone Exponential in this dt=0.1 s regime,
-    # giving custom a lower QBER despite its higher dark-count floor (p_dc=2e-5 vs 1e-5).
-    # The ΔT fix removed the S[pz,T]×20 pedestal, dropping QBER from ~2.5e-6 to ~2.0e-6;
-    # the direction of the gap (custom < default) and the magnitude are unchanged.
-    # Threshold = 3e-7 ≈ 59 % of the measured gap, giving ~1.7× safety margin.
+    # τ_qubit-scaled baseline: custom (50 km, τ≈245 µs) ≈ 5.0e-9 < default (25 km, τ≈122 µs)
+    # ≈ 9.2e-9; gap ≈ 4.2e-9.  QBER no longer scales with dt — both values are now
+    # ~1000× smaller than the old dt=0.1 s figures (ratio ≈ τ_qubit/dt).
+    # The Lorentzian kernel's spectral profile and the 50 km τ_qubit still yield a
+    # lower QBER than the 25 km Exponential scenario; direction is preserved.
+    # Threshold = 5e-10 ≈ 12% of the gap, giving ~8× safety margin.
     assert custom_qber < default_qber, (
         f"Lorentzian 50km scenario must have lower QBER than Exponential 25km: "
         f"custom={custom_qber:.3e} default={default_qber:.3e}"
     )
-    assert abs(custom_qber - default_qber) > 3e-7, (
+    assert abs(custom_qber - default_qber) > 5e-10, (
         f"QBER gap ({abs(custom_qber - default_qber):.3e}) below calibrated "
-        f"threshold 3e-7 (measured baseline: ~5.2e-7)"
+        f"threshold 5e-10 (τ_qubit-scaled baseline: ~4.2e-9)"
     )
 
 
@@ -591,11 +592,16 @@ _S_BALANCED = np.array(
 
 
 def test_dt_convergence_markovian_channel() -> None:
-    """Full-simulation QBER is dt-invariant (<1% relative diff) for a Markovian channel.
+    """QBER is dt-invariant for a Markovian channel (τ_qubit-scaled, not dt-scaled).
 
-    _S_BALANCED has equal X/Y sensitivity rows so lx = ly, giving Γ_Y = 0.
-    With no CP clamping needed, the generator scaling is algebraically exact
-    and QBER at matched wall-clock time must agree across dt choices.
+    Since QBER is now computed from the effective PTM scaled to τ_qubit
+    (LinkConfig.qubit_exposure_s) rather than dt_s, the per-step QBER no longer
+    grows with dt.  Both orchestrators share the same _LINK (same qubit_exposure_s)
+    and the same t=0 effective PTM (identical prewarm, no live sources), so
+    QBER(dt=1.0) ≈ QBER(dt=0.1) to machine precision.
+
+    _S_BALANCED has equal X/Y sensitivity rows → lx=ly → Γ_Y=0 → Markovian:
+    no CP clamping is needed and the generator formula is algebraically exact.
     """
     def _build(dt: float) -> TwinOrchestrator:
         o = TwinOrchestrator.build_simple(
@@ -611,14 +617,51 @@ def test_dt_convergence_markovian_channel() -> None:
 
     orch_coarse = _build(1.0)
     orch_fine = _build(0.1)
-    orch_coarse.run()
-    orch_fine.run()
-    qber_coarse = orch_coarse.results_for_link("link_0")[-1].qber
-    qber_fine = orch_fine.results_for_link("link_0")[-1].qber
+
+    # QBER is τ_qubit-scaled: both orchestrators use the same qubit_exposure_s,
+    # so QBER is identical regardless of the numerical step size.
+    qber_coarse = orch_coarse.step()[0].qber   # dt = 1.0 s
+    qber_fine = orch_fine.step()[0].qber       # dt = 0.1 s
+
     rel_diff = abs(qber_coarse - qber_fine) / max(qber_coarse, qber_fine, 1e-12)
     assert rel_diff < 0.01, (
-        f"Markovian dt-invariance failed: dt=1.0 qber={qber_coarse:.6f}, "
-        f"dt=0.1 qber={qber_fine:.6f}, rel_diff={rel_diff:.3f}"
+        f"QBER must be dt-invariant (τ_qubit-scaled, §5.7): "
+        f"dt=1.0 QBER={qber_coarse:.3e}, "
+        f"dt=0.1 QBER={qber_fine:.3e}, "
+        f"rel_diff={rel_diff:.4f}"
+    )
+
+
+def test_qber_dt_invariant() -> None:
+    """QBER(dt) == QBER(dt/2) within tolerance (§5.7 τ_qubit physical scaling).
+
+    Builds two orchestrators with dt and dt/2, both using the same _LINK
+    (same qubit_exposure_s) and the same t=0 effective PTM (no live sources).
+    QBER must agree to < 1% regardless of the numerical timestep.
+
+    Uses _S_BALANCED (Markovian) so no CP clamping breaks the exact semigroup
+    identity that underlies the τ_qubit-scaling formula.
+    """
+    def _build(dt: float) -> TwinOrchestrator:
+        o = TwinOrchestrator.build_simple(
+            n_qubits=2,
+            link_configs=[_LINK],
+            node_configs=[_NODE_A, _NODE_B],
+            duration_s=5.0,
+            dt_s=dt,
+            sensitivity=_S_BALANCED,
+        )
+        o._live_sources = {}
+        return o
+
+    qber_dt = _build(0.2).step()[0].qber
+    qber_half = _build(0.1).step()[0].qber
+
+    rel_diff = abs(qber_dt - qber_half) / max(qber_dt, qber_half, 1e-12)
+    assert rel_diff < 0.01, (
+        f"QBER must be dt-invariant (§5.7): "
+        f"QBER(dt=0.2)={qber_dt:.6e}, QBER(dt=0.1)={qber_half:.6e}, "
+        f"rel_diff={rel_diff:.4f}"
     )
 
 
@@ -702,4 +745,76 @@ def test_temperature_origin_invariance() -> None:
             "Pauli rates must be invariant to a uniform shift of the "
             "temperature origin when env_ref is shifted by the same amount."
         ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# B1 — WDM load schedule integration test (§3.3)
+# ---------------------------------------------------------------------------
+
+def test_wdm_schedule_raman_varies_over_run() -> None:
+    """A WDM schedule causes Raman rate to change between steps (§3.3 B1).
+
+    Schedule: activate at t=2 → deactivate at t=4.
+    - Before t=2: link is unmanaged (no activate yet) → static dict empty → rate 0.
+    - At t=2: activate fires before link loop → link managed, channel active → rate > 0.
+    - At t=4: deactivate fires → link managed, channel off → rate 0 (B2 semantics).
+
+    Uses ScenarioConfig.build_orchestrator() to exercise the full config→engine path.
+    """
+    scenario = ScenarioConfig(
+        scenario_name="B1 schedule test",
+        nodes=[
+            NodeConfigModel(node_id="A", qubit_index=0),
+            NodeConfigModel(node_id="B", qubit_index=1),
+        ],
+        links=[
+            LinkConfigModel(
+                link_id="l0",
+                source_node="A",
+                dest_node="B",
+                qubit_index=0,
+            )
+        ],
+        wdm_schedule=[
+            WDMScheduleEventModel(
+                t=2.0, link_id="l0", action="activate",
+                channel_id="c1", lambda_c_nm=1310.0, launch_power_mw=1.0,
+            ),
+            WDMScheduleEventModel(
+                t=4.0, link_id="l0", action="deactivate",
+                channel_id="c1",
+            ),
+        ],
+        duration_s=6.0,
+        dt_s=1.0,
+    )
+    orch = scenario.build_orchestrator()
+    # Disable live telemetry sources so each step is deterministic.
+    orch._live_sources = {}
+
+    r0 = orch.step()[0]  # self._t=0 before step: no event (t_event=2 > 0)
+    r1 = orch.step()[0]  # self._t=1: still no event
+    r2 = orch.step()[0]  # self._t=2: activate fires → channel active → rate > 0
+    r3 = orch.step()[0]  # self._t=3: channel still active
+    r4 = orch.step()[0]  # self._t=4: deactivate fires → managed + empty → rate 0
+    r5 = orch.step()[0]  # self._t=5: channel still off
+
+    assert r0.raman_rate_hz == pytest.approx(0.0, abs=1e-30), (
+        f"t=0 (before schedule): expected rate=0, got {r0.raman_rate_hz:.4e}"
+    )
+    assert r1.raman_rate_hz == pytest.approx(0.0, abs=1e-30), (
+        f"t=1 (before schedule): expected rate=0, got {r1.raman_rate_hz:.4e}"
+    )
+    assert r2.raman_rate_hz > 0.0, (
+        f"t=2 (activation): expected rate > 0, got {r2.raman_rate_hz:.4e}"
+    )
+    assert r3.raman_rate_hz > 0.0, (
+        f"t=3 (channel active): expected rate > 0, got {r3.raman_rate_hz:.4e}"
+    )
+    assert r4.raman_rate_hz == pytest.approx(0.0, abs=1e-30), (
+        f"t=4 (deactivation): expected rate=0 (B2 managed+empty), got {r4.raman_rate_hz:.4e}"
+    )
+    assert r5.raman_rate_hz == pytest.approx(0.0, abs=1e-30), (
+        f"t=5 (channel off): expected rate=0, got {r5.raman_rate_hz:.4e}"
     )

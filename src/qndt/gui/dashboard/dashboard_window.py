@@ -258,9 +258,9 @@ class DashboardWindow(QWidget):
         self._fidelity_plot.add_link(link_id, colour)
         self._key_rate_plot.add_link(link_id, colour)
 
-    def add_node(self, node_id: str, t2_nominal: float, wear_const_nc: float) -> None:
+    def add_node(self, node_id: str, t2_nominal: float, wear_rate_kappa: float) -> None:
         """Register a node with the device aging plot."""
-        self._aging_plot.add_node(node_id, t2_nominal, wear_const_nc)
+        self._aging_plot.add_node(node_id, t2_nominal, wear_rate_kappa)
 
     def clear_all(self) -> None:
         """Clear all plot data across every dashboard tab."""

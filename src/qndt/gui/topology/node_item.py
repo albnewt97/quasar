@@ -303,11 +303,11 @@ class NodePropertiesDialog(QDialog):
         self._t2_spin.setSuffix(" s")
         form.addRow(self._t2_label, self._t2_spin)
 
-        self._wear_label = QLabel("Wear const Nc:")
+        self._wear_label = QLabel("κ [s⁻²]:")
         self._wear_spin = QDoubleSpinBox()
-        self._wear_spin.setRange(1.0, 1e9)
-        self._wear_spin.setValue(1_000_000.0)
-        self._wear_spin.setDecimals(0)
+        self._wear_spin.setRange(0.0, 10.0)
+        self._wear_spin.setValue(1e-4)
+        self._wear_spin.setDecimals(6)
         form.addRow(self._wear_label, self._wear_spin)
 
         buttons = QDialogButtonBox(
@@ -331,7 +331,7 @@ class NodePropertiesDialog(QDialog):
 
         Returns:
             Dict with ``label``, ``node_type``, and optionally
-            ``t2_nominal`` / ``wear_const_nc`` for memory nodes.
+            ``t2_nominal`` / ``wear_rate_kappa`` for memory nodes.
         """
         cfg: dict[str, object] = {
             "label": self._label_edit.text(),
@@ -339,5 +339,5 @@ class NodePropertiesDialog(QDialog):
         }
         if self._type_combo.currentText() == "memory_node":
             cfg["t2_nominal"] = self._t2_spin.value()
-            cfg["wear_const_nc"] = self._wear_spin.value()
+            cfg["wear_rate_kappa"] = self._wear_spin.value()
         return cfg

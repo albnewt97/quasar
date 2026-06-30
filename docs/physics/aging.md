@@ -11,11 +11,11 @@ Quasar makes T₂ a function of accumulated operational duty cycle D(t) = ∫₀
 
 T₂⁽⁰⁾ is the as-calibrated coherence time, κ is the wear coefficient, and the second identity (standard T₁/T₂/T_φ relation) is exact. Wear acts on the pure-dephasing time T_φ; the longitudinal relaxation time T₁ is not subject to duty-cycle wear. The resulting dephasing eigenvalues are λ_x(t) = λ_y(t) = exp(−t_idle/T₂(D)) while λ_z is governed by T₁.
 
-> **Code discrepancy:** `DeviceAgingModel` (`src/qndt/physics/aging.py`) currently implements `T₂(N) = T₂⁽⁰⁾·exp(−N/Nc)` — exponential decay indexed by discrete cumulative op-count N, not the continuous duty-cycle integral D. See the Known Discrepancies table in [README.md](README.md).
+**Physical bound enforcement (T₂ ≤ 2T₁):** Because T_φ ≥ 0, the identity requires T₂ ≤ 2T₁ at all times. Equality (T₂ = 2T₁) is the pure-T₁ limit (T_φ → ∞). This bound is enforced at configuration load time by `NodeConfigModel` (pydantic validator) and at runtime by `DeviceAgingModel.__init__` and `set_node_params`. An unphysical T₂ > 2T₁ raises `ValueError` with the violated values. Reference: Nielsen & Chuang (2010) Ch. 8 [ref 1].
 
 ## Gate Overrotation Drift
 
-> **Implementation extension** — this model is not in the whitepaper (`quasar_physics.tex`). It describes code behaviour in `DeviceAgingModel.gate_overrotation` (`src/qndt/physics/aging.py`).
+> **[PHENOMENOLOGICAL MODEL]** — documented in whitepaper §6 as a deliberate code extension; calibrated engineering heuristic, not derived from a primary source. Code behaviour in `DeviceAgingModel.gate_overrotation` (`src/qndt/physics/aging.py`).
 
 ```math
 \varepsilon(t) = \varepsilon_0 + \kappa_{\mathrm{drift}}\,t
@@ -32,12 +32,10 @@ p_z^{\mathrm{idle}} = \tfrac{1}{2}
 
 This is where the classical and quantum layers couple (whitepaper §7). `t_idle` is `induced_idle` — the waiting time a quantum memory is forced to hold state because the classical control plane has not yet delivered the signalling needed to proceed (route computation, acknowledgment, retransmission). Whatever congestion or jitter the `AsynchronousControlPlane` produces converts directly into a dephasing probability on the waiting qubit; a longer wait against an already-worn T₂(D) compounds both effects. The Z-error probability p_z maps to the transverse PTM eigenvalues via λ_x = λ_y = 1 − 2p_z (standard phase-flip eigenvalue relation).
 
-> **Code note:** the code uses T₂(N) (exponential model) rather than T₂(D) (Matthiessen rule) — see discrepancy #1 in the Known Discrepancies table.
-
 ## Interpreting the Aging Dashboard
 
-The `AgingPlot` panel tracks `T2(N)` against cumulative operation count `N`, with an exponential fit overlay so the configured `wear_const_nc` and observed decay can be visually cross-checked.
+The `AgingPlot` panel tracks `T2(D)` against accumulated duty cycle `D` [s], with the Matthiessen curve `T2(D) = 1/(1/T2_0 + κD)` overlaid so the configured `wear_rate_kappa` and observed decay can be visually cross-checked.
 
-- **What "Critical" T2 means operationally**: there is no single universal threshold, but as `T2(N)` falls toward the timescale of `induced_idle` waits the node is actually experiencing, idle dephasing `p_z^{idle}` rapidly approaches its ceiling of 0.5 (fully dephased) — a node is operationally critical once its current `T2` is no longer comfortably larger than the control plane's typical induced-idle durations on links touching that node.
-- **When to schedule recalibration**: recalibration resets `gate_overrotation_0` and the elapsed-time clock used by `ε(t)`, but it does **not** reset cumulative operation count `N` or restore `T2(N)` — wear is permanent in this model. Recalibration is therefore worth scheduling when `ε(t)`'s linear drift has grown large relative to the gate-error budget, independent of where `T2(N)` happens to be.
-- **Effect of `wear_const_nc`**: a larger `Nc` means the node tolerates more cumulative operations before `T2` meaningfully decays — physically, a more robust device or a less aggressive duty cycle. Lowering `Nc` in a scenario config is the direct way to simulate a node under heavier operational stress without changing anything else about the topology.
+- **What "Critical" T2 means operationally**: there is no single universal threshold, but as `T2(D)` falls toward the timescale of `induced_idle` waits the node is actually experiencing, idle dephasing `p_z^{idle}` rapidly approaches its ceiling of 0.5 (fully dephased) — a node is operationally critical once its current `T2` is no longer comfortably larger than the control plane's typical induced-idle durations on links touching that node.
+- **When to schedule recalibration**: recalibration resets `gate_overrotation_0` and the elapsed-time clock used by `ε(t)`, but it does **not** reset accumulated duty cycle `D` or restore `T2(D)` — wear is permanent in this model. Recalibration is therefore worth scheduling when `ε(t)`'s linear drift has grown large relative to the gate-error budget, independent of where `T2(D)` happens to be.
+- **Effect of `wear_rate_kappa`**: a smaller κ means the node tolerates more accumulated duty cycle before `T2` meaningfully decays — physically, a more robust device. Raising κ in a scenario config directly simulates a node under heavier wear stress without changing anything else about the topology.

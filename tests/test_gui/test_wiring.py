@@ -93,12 +93,12 @@ def test_node_config_change_stored(qtbot: QtBot) -> None:
     controller = SimulationController(window, window.dashboard, window._topology_model)
 
     window._canvas.node_config_changed.emit(
-        "n1", {"t2_nominal": 0.5, "wear_const_nc": 5e5, "node_type": "memory_node"}
+        "n1", {"t2_nominal": 0.5, "wear_rate_kappa": 5e5, "node_type": "memory_node"}
     )
 
     assert "n1" in controller._node_aging_overrides
     assert controller._node_aging_overrides["n1"]["t2_nominal"] == pytest.approx(0.5)
-    assert controller._node_aging_overrides["n1"]["wear_const_nc"] == pytest.approx(5e5)
+    assert controller._node_aging_overrides["n1"]["wear_rate_kappa"] == pytest.approx(5e5)
 
 
 def test_node_override_applied_on_build(qtbot: QtBot) -> None:
@@ -112,7 +112,7 @@ def test_node_override_applied_on_build(qtbot: QtBot) -> None:
     window._topology_model.add_link("link_01", "Alice", "Bob")
 
     window._canvas.node_config_changed.emit(
-        "Alice", {"t2_nominal": 0.3, "wear_const_nc": 2e5, "node_type": "memory_node"}
+        "Alice", {"t2_nominal": 0.3, "wear_rate_kappa": 2e5, "node_type": "memory_node"}
     )
 
     controller._build_orchestrator()
@@ -208,7 +208,7 @@ def test_per_node_override_reaches_model(qtbot: QtBot) -> None:
     window._topology_model.add_link("link_01", "Alice", "Bob")
 
     window._canvas.node_config_changed.emit(
-        "Alice", {"t2_nominal": 0.4, "wear_const_nc": 3e5, "node_type": "memory_node"}
+        "Alice", {"t2_nominal": 0.4, "wear_rate_kappa": 3e5, "node_type": "memory_node"}
     )
 
     orchestrator = controller._build_orchestrator()
@@ -216,7 +216,7 @@ def test_per_node_override_reaches_model(qtbot: QtBot) -> None:
 
     params = orchestrator._aging_model.node_params("Alice")
     assert params["t2_nominal"] == pytest.approx(0.4)
-    assert params["wear_const_nc"] == pytest.approx(3e5)
+    assert params["wear_rate_kappa"] == pytest.approx(3e5)
 
 
 # ---------------------------------------------------------------------------

@@ -219,26 +219,51 @@ quantum-channel detection bandwidth $\Delta\lambda$ for the two propagation geom
 \end{align}
 where $P_0$ is the launched classical power, $L$ the fibre length, $\alpha$ the attenuation
 coefficient (taken equal at the pump and scattered wavelengths --- the standard approximation),
-and $C_{\mathrm{R}}(\Delta\nu)$ the SpRS cross-section per unit length per unit bandwidth
-at frequency offset $\Delta\nu$ between the classical and quantum channels. Near the quantum
-channel $C_{\mathrm{R}}$ is well approximated by a V-shaped linear law with distinct Stokes /
-anti-Stokes slopes \cite{dasilva2014},
+and $\rho(\Delta\nu)$ the SpRS cross-section per unit length per unit bandwidth at frequency
+offset $\Delta\nu = \nu_{\mathrm{cl}}-\nu_{\mathrm{q}}$ ($>0$ Stokes, $<0$ anti-Stokes).
+The cross-section follows the spontaneous-Raman spectral shape of silica
+\cite{dasilva2014,agrawal2019},
 \begin{equation}
-C_{\mathrm{R}}(\Delta\nu)\simeq
-\begin{cases}
-C_0+\beta_{\mathrm{S}}\,|\Delta\nu|, & \nu_{\mathrm{cl}}>\nu_{\mathrm{q}} \;(\text{Stokes}),\\[2pt]
-C_0+\beta_{\mathrm{AS}}\,|\Delta\nu|, & \nu_{\mathrm{cl}}<\nu_{\mathrm{q}} \;(\text{anti-Stokes}).
-\end{cases}
+\boxed{\;\rho(\Delta\nu)=\rho_{\mathrm{peak}}\cdot g(|\Delta\nu|)\cdot A(\Delta\nu,T),\;}
 \end{equation}
+where $g(|\Delta\nu|)$ is the \emph{normalised} silica spontaneous-Raman spectral shape (peak
+at ${\approx}13.2\,\mathrm{THz}$ / $440\,\mathrm{cm}^{-1}$, falling to zero near
+$45\,\mathrm{THz}$; tabulated from Agrawal \cite{agrawal2019}, Fig.~8.1), and
+$A(\Delta\nu,T)$ is the Bose--Einstein thermal asymmetry factor \cite{boyd2020}:
+\begin{equation}
+A(\Delta\nu,T)=\begin{cases}
+n(|\Delta\nu|,T)+1, & \Delta\nu>0\;(\text{Stokes}),\\[2pt]
+n(|\Delta\nu|,T), & \Delta\nu<0\;(\text{anti-Stokes}),
+\end{cases}
+\qquad
+n(|\Delta\nu|,T)=\frac{1}{e^{h|\Delta\nu|/k_{\mathrm{B}}T}-1},
+\end{equation}
+with default $T=300\,\mathrm{K}$.  The Stokes/anti-Stokes asymmetry $\beta_{\mathrm{S}} >
+\beta_{\mathrm{AS}}$ at equal $|\Delta\nu|$ follows automatically from Bose--Einstein
+statistics rather than from two independent fitted slopes.  The absolute scale
+$\rho_{\mathrm{peak}}$ is \emph{calibrated} so that the model reproduces
+$\rho(35.4\,\mathrm{THz})\approx4\times10^{-11}\,\mathrm{(km\cdot nm)}^{-1}$ at the
+$1310\to1550\,\mathrm{nm}$ Stokes offset \cite{eraerds2010,dasilva2014}; this gives
+$\rho_{\mathrm{peak}}\approx1.19\times10^{-9}\,\mathrm{(km\cdot nm)}^{-1}$.
+
+\textit{Note on the previous approximation.} An earlier form of eq.~(16) used a V-shaped
+linear law $C_{\mathrm{R}}(\Delta\nu)\simeq C_0+\beta_{\mathrm{S/AS}}|\Delta\nu|$.  This is
+a valid small-offset local approximation \cite{dasilva2014}, but the calibrated operating band
+($12$--$43\,\mathrm{THz}$) sits entirely on the \emph{falling} side of the 13.2~THz silica
+peak, where the linear-$\nu$ approximation is not accurate.  The physically-correct
+spectral-shape form above supersedes it.  [LITERATURE-GROUNDED]
 For $M$ active classical channels the contributions add incoherently,
 $P_{\mathrm{R}}=\sum_{m=1}^{M}P^{(m)}$. The collected Raman power is then converted into a mean
 induced detector count per gate of length $\Delta t$ at detection efficiency $\eta$, with
 $h\nu$ the quantum-channel photon energy (this mean equals a per-gate click probability in the
 relevant regime $p_{\mathrm{R}}\ll 1$),
 \begin{equation}
-\boxed{\;p_{\mathrm{R}}=\frac{\eta\,\Delta t}{h\nu}\,P_{\mathrm{R}},\qquad
+\boxed{\;p_{\mathrm{R}}=\frac{\eta\,T_{\mathrm{opt}}\,\Delta t}{h\nu}\,P_{\mathrm{R}},\qquad
 Y_0 = 2\,p_{\mathrm{dark}}+p_{\mathrm{R}},\;}
 \end{equation}
+where $T_{\mathrm{opt}}\in(0,1]$ is the optical transmission of the detector filter and coupling
+stage (in-line insertion loss between the fibre exit and the active detector element;
+$T_{\mathrm{opt}}=1$ recovers the ideal lossless case) \cite{eraerds2010,dasilva2014},
 so that classical traffic raises the effective background floor $Y_0$ that feeds directly into
 the link's QBER and secure-key-rate estimates \cite{eraerds2010}. Quasar models a
 BB84-style dual-detector receiver: the two single-photon detectors contribute independent
@@ -269,6 +294,24 @@ calibrated against device logs, not derived --- which is why the module as a who
 phenomenological tag. Imperfect calibration is modelled by sampling the as-built parameters
 $(T_2^{(0)},T_1,\eta,\dots)$ from device-specific tolerance distributions rather than fixing
 them at nominal values.
+
+\subsection{Calibration drift: gate overrotation}
+\statusPhenom
+
+Beyond coherence-time wear, each device node carries a gate-overrotation offset $\varepsilon(t)$
+that grows linearly with time $t$ elapsed since the node's last calibration,
+\begin{equation}
+\varepsilon(t)=\varepsilon_0+\kappa_{\mathrm{drift}}\,t,
+\end{equation}
+where $\kappa_{\mathrm{drift}}$ [rad/s] is the calibration-drift rate (distinct from the
+duty-cycle wear coefficient $\kappa$ above), and $\varepsilon_0$ is the residual overrotation
+at the last calibration instant. This captures the slow, deterministic creep of device
+parameters away from their calibration snapshot --- a process physically distinct from the
+stochastic decoherence modelled by the $T_2(D)$ wear law. It is a calibrated engineering
+heuristic rather than a derived result, and carries the same phenomenological status as the
+$\kappa D$ wear term and the sensitivity matrix $\mathbf{S}$. Recalibration resets
+$\varepsilon_0$ and the elapsed-time clock but does \emph{not} restore $T_2(D)$; wear and
+drift accrue independently.
 
 \section{Classical--quantum control-plane desynchronisation}
 \statusArch
@@ -431,6 +474,16 @@ reconfigurable networking environments,''
 J.~P. von der Weid, ``Impact of Raman scattered noise from multiple telecom channels on
 fiber-optic quantum key distribution systems,''
 \emph{J. Lightwave Technol.} \textbf{32}, 2332--2339 (2014).
+
+\bibitem{agrawal2019} G.~P. Agrawal,
+\emph{Nonlinear Fiber Optics}, 6th ed. (Academic Press, 2019),
+Fig.~8.1 — canonical silica Raman gain spectrum, used here for the normalised
+spectral shape $g(|\Delta\nu|)$ with peak at ${\approx}13.2\,\mathrm{THz}$ ($440\,\mathrm{cm}^{-1}$).
+
+\bibitem{boyd2020} R.~W. Boyd,
+\emph{Nonlinear Optics}, 4th ed. (Academic Press, 2020), \S10.2 —
+Stokes/anti-Stokes spontaneous-Raman intensity proportional to $(n+1)$ and $n$ respectively,
+where $n$ is the Bose--Einstein phonon occupation number.
 
 \bibitem{schollwock2011} U.~Schollw\"ock,
 ``The density-matrix renormalization group in the age of matrix product states,''

@@ -140,19 +140,27 @@ When the quantum channel shares fibre with classical WDM traffic, spontaneous Ra
 \end{align}
 ```
 
-where $P_0$ is the launched classical power, $L$ the fibre length, $\alpha$ the attenuation coefficient, and $\rho(\Delta\nu)$ the SpRS cross-section per unit length per unit bandwidth at frequency offset $\Delta\nu$ between the classical and quantum channels. Near the quantum channel $\rho$ is well approximated by a V-shaped linear law with distinct Stokes / anti-Stokes slopes [[13]](#ref-13):
+where $P_0$ is the launched classical power, $L$ the fibre length, $\alpha$ the attenuation coefficient, and $\rho(\Delta\nu)$ the SpRS cross-section per unit length per unit bandwidth at frequency offset $\Delta\nu = \nu_\mathrm{cl} - \nu_\mathrm{q}$ between the classical and quantum channels. The cross-section follows the spontaneous-Raman spectral shape of silica [[13]](#ref-13):
 
 ```math
-\rho(\Delta\nu) \simeq \begin{cases} \rho_0 + \beta_{\mathrm{S}}\,|\Delta\nu|, & \nu_{\mathrm{cl}} > \nu_{\mathrm{q}} \quad (\text{Stokes}) \\[4pt] \rho_0 + \beta_{\mathrm{AS}}\,|\Delta\nu|, & \nu_{\mathrm{cl}} < \nu_{\mathrm{q}} \quad (\text{anti-Stokes}) \end{cases} \tag{16}
+\rho(\Delta\nu) = \rho_{\mathrm{peak}} \cdot g(|\Delta\nu|) \cdot A(\Delta\nu, T) \tag{16}
 ```
+
+where $g(|\Delta\nu|)$ is the normalized silica spontaneous-Raman spectral shape (peak at ≈ 13.2 THz / 440 cm⁻¹, falling to near zero by ~45 THz; tabulated from Agrawal, *Nonlinear Fiber Optics*, 6th ed., Fig. 8.1 [[A]](#ref-agrawal)), and $A(\Delta\nu, T)$ is the Bose–Einstein thermal asymmetry:
+
+```math
+A(\Delta\nu, T) = \begin{cases} n(|\Delta\nu|, T) + 1, & \Delta\nu > 0 \quad (\text{Stokes}) \\[4pt] n(|\Delta\nu|, T), & \Delta\nu < 0 \quad (\text{anti-Stokes}) \end{cases}, \qquad n(|\Delta\nu|, T) = \frac{1}{e^{h|\Delta\nu|/k_{\mathrm{B}}T} - 1}
+```
+
+with default $T = 300\,\mathrm{K}$. The absolute scale $\rho_{\mathrm{peak}}$ is **calibrated** so the model reproduces the Eraerds-anchored magnitude $\rho(35.4\,\mathrm{THz}) \approx 4 \times 10^{-11}$ 1/(km·nm) at the 1310 → 1550 nm Stokes offset [[11]](#ref-11) [[13]](#ref-13). This naturally gives $\beta_\mathrm{S} > \beta_\mathrm{AS}$ at equal $|\Delta\nu|$ from Bose–Einstein physics, not from two independent fitted slopes. The calibrated operating band (12–43 THz) sits entirely on the **falling side** of the 13.2 THz silica peak; the old linear-$\nu$ approximation from eq (16) was a small-offset local approximation that is not valid across this range. [LITERATURE-GROUNDED]
 
 For $M$ active classical channels the contributions add incoherently, $P_{\mathrm{R}} = \sum_{m=1}^{M} P^{(m)}$. The collected Raman power is then converted into an induced detector count probability per gate of length $\Delta t$ and detection efficiency $\eta$:
 
 ```math
-p_{\mathrm{R}} = \frac{\eta\,\Delta t}{h\nu}\,P_{\mathrm{R}}, \qquad Y_0 = 2\,p_{\mathrm{dark}} + p_{\mathrm{R}} \tag{17}
+p_{\mathrm{R}} = \frac{\eta\,T_{\mathrm{opt}}\,\Delta t}{h\nu}\,P_{\mathrm{R}}, \qquad Y_0 = 2\,p_{\mathrm{dark}} + p_{\mathrm{R}} \tag{17}
 ```
 
-Classical traffic raises the effective background floor $Y_0$ that feeds directly into the link's QBER and secure-key-rate estimates [[11]](#ref-11). Quasar models a BB84-style dual-detector receiver: the two single-photon detectors contribute independent intrinsic dark counts, hence the $2\,p_{\mathrm{dark}}$ multiplicity, whereas the Raman term $p_{\mathrm{R}}$ enters once (an incident Raman photon registers on one detector arm). This is the mechanism by which a busy classical fibre silently degrades a co-existing quantum channel.
+where `T_opt ∈ (0, 1]` is the optical transmission of the detector filter and coupling stage (in-line insertion loss between the fibre output and the active detector element; `T_opt = 1` recovers the ideal lossless case) [[11]](#ref-11) [[13]](#ref-13). Classical traffic raises the effective background floor $Y_0$ that feeds directly into the link's QBER and secure-key-rate estimates [[11]](#ref-11). Quasar models a BB84-style dual-detector receiver: the two single-photon detectors contribute independent intrinsic dark counts, hence the $2\,p_{\mathrm{dark}}$ multiplicity, whereas the Raman term $p_{\mathrm{R}}$ enters once (an incident Raman photon registers on one detector arm). This is the mechanism by which a busy classical fibre silently degrades a co-existing quantum channel.
 
 > See [raman.md](raman.md) for implementation details.
 
@@ -170,7 +178,19 @@ Memory nodes in Quasar carry a coherence budget that erodes with use. Idealised 
 
 with $T_2^{(0)}$ the as-calibrated coherence time. The second identity is the standard relation linking $T_2$, $T_1$, and the pure-dephasing time $T_\phi$ [[1]](#ref-1); it is exact and included so the wear law has an unambiguous effect on the dephasing channel. The dephasing eigenvalue form and $T_1/T_2/T_\phi$ decomposition are standard [[1]](#ref-1) [[6]](#ref-6); the duty-cycle wear term $\kappa D$ is Quasar's own engineering heuristic, calibrated rather than derived — hence the phenomenological tag.
 
-> See [aging.md](aging.md) for implementation details. Note the **discrepancy** in §Known discrepancies below: the code uses a different functional form.
+### Calibration drift: gate overrotation
+
+**[PHENOMENOLOGICAL MODEL]**
+
+Each device node also carries a gate-overrotation offset ε(t) that grows linearly with time elapsed since the node's last calibration:
+
+```math
+\varepsilon(t) = \varepsilon_0 + \kappa_{\mathrm{drift}}\,t
+```
+
+where `κ_drift` [rad/s] is the calibration-drift rate (distinct from the duty-cycle wear coefficient κ in eq (18)), and `ε_0` is the residual overrotation at the last calibration. This models the slow, deterministic creep of device parameters away from their calibration snapshot — a process distinct from the stochastic decoherence captured by the T₂(D) wear model. It is a calibrated engineering heuristic, not derived from a primary source, and carries the same phenomenological status as the κD wear term and the sensitivity matrix **S**. Recalibration resets `ε_0` and the elapsed-time clock but does **not** restore T₂(D); wear and drift accrue independently.
+
+> See [aging.md](aging.md) for implementation details.
 
 ---
 
@@ -208,10 +228,10 @@ The table below records places where the whitepaper (`quasar_physics.tex`) and t
 
 | # | Topic | Whitepaper | Code (`src/qndt/physics/`) | Notes |
 |---|-------|-----------|---------------------------|-------|
-| 1 | Aging — T₂ wear law | Eq (18): $\frac{1}{T_2(D)} = \frac{1}{T_2^{(0)}} + \kappa D(t)$, $D = \int u\,\mathrm{d}t$ — Matthiessen's rule, continuous duty-cycle integral | `aging.py`: $T_2(N) = T_2^{(0)}\,e^{-N/N_c}$ — exponential decay indexed by discrete cumulative op-count $N$ | Distinct functional forms. `aging.md` now matches the whitepaper; code not yet updated. |
-| 2 | Aging — gate overrotation drift | Not covered | `aging.py`: $\varepsilon(t) = \varepsilon_0 + \kappa_{\mathrm{drift}}\,t$ — linear drift since last calibration | Implementation extension; no contradiction with whitepaper physics. |
-| 3 | Raman — cross-section model | Eq (16): V-shaped law $C_{\mathrm{R}}(\Delta\nu) = C_0 + \beta_{\mathrm{S/AS}}|\Delta\nu|$ — continuous, frequency-offset parameterised | `raman.py`: discrete lookup table $\beta(\lambda_c, \lambda_q)$ at calibrated wavelength pairs with linear interpolation | Same physical quantity; different parameterisation. Table values calibrated against Eraerds et al. (2010). |
-| 4 | Raman — optical filter term | Eq (17): $p_{\mathrm{R}} = \frac{\eta\,\Delta t}{h\nu}\,P_{\mathrm{R}}$ — no $T_{\mathrm{opt}}$ factor | `raman.py`: rate formula includes $\eta_{\mathrm{det}} \cdot T_{\mathrm{opt}}$ | Implementation extension accounting for imperfect filter/coupling transmission; not in the whitepaper derivation. |
+| 1 | Aging — T₂ wear law | Eq (18): $\frac{1}{T_2(D)} = \frac{1}{T_2^{(0)}} + \kappa D(t)$, $D = \int u\,\mathrm{d}t$ — Matthiessen's rule, continuous duty-cycle integral | `aging.py`: implements eq (18); `D` accumulated via `register_op(op_duration_s)` | **Resolved.** Code now matches whitepaper. Schema field renamed `wear_rate_kappa` [s⁻²]. |
+| 2 | Aging — gate overrotation drift | Not covered | `aging.py`: $\varepsilon(t) = \varepsilon_0 + \kappa_{\mathrm{drift}}\,t$ — linear drift since last calibration | **Resolved.** Documented in §6 as a deliberate code extension [PHENOMENOLOGICAL MODEL]; same epistemic standing as the κD wear term. |
+| 3 | Raman — cross-section model | Eq (16): $\rho(\Delta\nu) = \rho_{\mathrm{peak}} \cdot g(\|\Delta\nu\|) \cdot A(\Delta\nu, T)$ — silica Raman spectral shape × Bose–Einstein factor | `raman.py`: same profile, calibrated to Eraerds (2010) at 1310→1550 nm. $\rho_\mathrm{peak} \approx 1.19 \times 10^{-9}$ 1/(km·nm); $T = 300\,\mathrm{K}$ default. | **Resolved.** Old V-shaped linear approximation replaced with physically-correct ρ(Δν) profile. Stokes/anti-Stokes asymmetry now from Bose–Einstein physics. |
+| 4 | Raman — optical filter term | Eq (17): $p_{\mathrm{R}} = \frac{\eta\,T_{\mathrm{opt}}\,\Delta t}{h\nu}\,P_{\mathrm{R}}$ — includes $T_{\mathrm{opt}} \in (0,1]$ | `raman.py`: rate formula includes $\eta_{\mathrm{det}} \cdot T_{\mathrm{opt}}$ | **Resolved.** $T_{\mathrm{opt}}$ (filter+coupling optical transmission) added to eq (17) in whitepaper and .tex; cited [[11]](#ref-11) [[13]](#ref-13). |
 
 ---
 
@@ -242,6 +262,8 @@ The table below records places where the whitepaper (`quasar_physics.tex`) and t
 <a id="ref-12"></a>**[12]** N. A. Peters, P. Toliver, T. E. Chapuran *et al.*, "Dense wavelength multiplexing of 1550 nm QKD with strong classical channels in reconfigurable networking environments," *New J. Phys.* **11**, 045012 (2009).
 
 <a id="ref-13"></a>**[13]** T. Ferreira da Silva, G. B. Xavier, G. P. Temporão and J. P. von der Weid, "Impact of Raman scattered noise from multiple telecom channels on fiber-optic quantum key distribution systems," *J. Lightwave Technol.* **32**, 2332–2339 (2014).
+
+<a id="ref-agrawal"></a>**[A]** G. P. Agrawal, *Nonlinear Fiber Optics*, 6th ed. (Academic Press, 2019), Fig. 8.1 — canonical silica Raman gain spectrum shape used for $g(|\Delta\nu|)$.
 
 <a id="ref-14"></a>**[14]** U. Schollwöck, "The density-matrix renormalization group in the age of matrix product states," *Ann. Phys.* **326**, 96–192 (2011).
 

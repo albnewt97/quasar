@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -256,6 +257,58 @@ class AsynchronousControlPlane:
             return 0.0
         latencies = [r.latency_s for r in relevant[-10:]]
         return float(np.std(latencies))
+
+    def manages_link(self, link_id: str) -> bool:
+        """Return True if ``link_id`` is managed by the WDM load tracker.
+
+        Delegates to :meth:`WDMLoadTracker.manages_link`.  Used by
+        :class:`~qndt.physics.raman.CoexistenceNoiseEngine` to distinguish
+        "CP-managed, all channels off → Raman 0" from "unmanaged → static dict".
+
+        Args:
+            link_id: Fiber link identifier.
+
+        Returns:
+            ``True`` if the link was ever activated; ``False`` otherwise.
+        """
+        return self._load_tracker.manages_link(link_id)
+
+    def activate_channel(self, link_id: str, spec: Any) -> None:
+        """Activate a classical WDM channel on a link via the load tracker.
+
+        ``spec`` is a ``ClassicalChannelSpec`` (from ``qndt.physics.raman``).
+        Typed as ``Any`` here to avoid an ``AsynchronousControlPlane →
+        CoexistenceNoiseEngine`` import dependency (§3.3 Law 3).
+
+        Args:
+            link_id: Fiber link identifier.
+            spec: ``ClassicalChannelSpec`` channel specification.
+        """
+        self._load_tracker.activate(link_id, spec)
+
+    def deactivate_channel(self, link_id: str, channel_id: str) -> None:
+        """Deactivate a classical WDM channel on a link via the load tracker.
+
+        Args:
+            link_id: Fiber link identifier.
+            channel_id: Channel to remove.
+        """
+        self._load_tracker.deactivate(link_id, channel_id)
+
+    def update_channel_power(
+        self, link_id: str, channel_id: str, power_mw: float
+    ) -> None:
+        """Update launch power for an active channel via the load tracker.
+
+        Args:
+            link_id: Fiber link identifier.
+            channel_id: Channel to update.
+            power_mw: New launch power in mW.
+
+        Raises:
+            KeyError: If the channel is not active on the link.
+        """
+        self._load_tracker.update_power(link_id, channel_id, power_mw)
 
     def congestion_timeseries(self, link_id: str) -> list[tuple[float, float]]:
         """Return the full congestion history for a link.

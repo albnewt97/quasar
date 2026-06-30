@@ -48,6 +48,11 @@ _log = logging.getLogger(__name__)
 _QBER_MAX: float = 0.5
 # Tolerance for the CP-floor clamp (absorbs IEEE 754 cancellation near boundary).
 _CP_CLAMP_TOL: float = 1e-9
+# Speed of light (vacuum) and SMF-28 group index at 1550 nm.
+# Used to compute the default per-qubit propagation delay τ_qubit = L·n_g/c.
+# Source: Saleh & Teich, "Fundamentals of Photonics", §8.2.
+_C_LIGHT: float = 2.998e8   # m/s
+_N_GROUP: float = 1.468     # SMF-28 group refractive index at 1550 nm
 
 
 class SimulationStepError(RuntimeError):
@@ -145,6 +150,12 @@ class LinkConfig:
         gate_width_s: Quantum gate duration in seconds.
         qubit_index: Index of the qubit in TensorStateTracker representing
             this link's quantum state.
+        qubit_exposure_s: Physical per-qubit exposure time τ_qubit [s] used
+            to scale the effective PTM for QBER estimation (§5.7).  Must be
+            > 0.  For fly-by / point-to-point links set to the fiber
+            propagation delay L·n_g/c; for quantum-memory / repeater nodes
+            override with the memory hold time so that aging strongly drives
+            QBER.  Default: propagation delay of a 25 km SMF-28 span.
     """
 
     link_id: str
@@ -153,6 +164,7 @@ class LinkConfig:
     lambda_q_nm: float
     gate_width_s: float
     qubit_index: int
+    qubit_exposure_s: float = 25e3 * _N_GROUP / _C_LIGHT
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,6 +242,32 @@ class SimulationResult:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class WDMScheduleEntry:
+    """A single timed WDM channel event applied by TwinOrchestrator during step().
+
+    Applied at the start of the step whose simulation time equals or exceeds
+    ``t`` (i.e., when ``self._t >= t``), before the link physics loop runs.
+    Events are applied in ascending ``t`` order.
+
+    Args:
+        t: Simulation time [s] at which this event fires.
+        link_id: Fiber link to apply the event on.
+        action: One of ``"activate"``, ``"deactivate"``, or ``"update_power"``.
+        channel_id: Classical channel identifier.
+        lambda_c_nm: Centre wavelength [nm]; required for ``"activate"``.
+        launch_power_mw: Launch power [mW]; required for ``"activate"`` and
+            ``"update_power"``.  Ignored for ``"deactivate"``.
+    """
+
+    t: float
+    link_id: str
+    action: str
+    channel_id: str
+    lambda_c_nm: float = 0.0
+    launch_power_mw: float = 0.0
+
+
 class TwinOrchestrator:
     """Master event kernel wiring all physics engines to the quantum tracker.
 
@@ -248,6 +286,8 @@ class TwinOrchestrator:
             ``NoiseBus()`` is created if ``None``.
         key_rate_params: BB84 key rate calculator parameters.  Defaults to
             ``KeyRateParams()`` (standard WCP BB84 with f_ec=1.16).
+        wdm_schedule: Optional timed WDM channel events applied in-order during
+            ``step()`` (§3.3 B1).  Sorted by ``t`` at construction.
     """
 
     def __init__(
@@ -260,6 +300,7 @@ class TwinOrchestrator:
         tracker: TensorStateTracker,
         bus: NoiseBus | None = None,
         key_rate_params: KeyRateParams | None = None,
+        wdm_schedule: list[WDMScheduleEntry] | None = None,
     ) -> None:
         self._config = config
         self._telemetry_engine = telemetry_engine
@@ -281,6 +322,12 @@ class TwinOrchestrator:
         # Populated by build_simple(); stepped in step() to keep telemetry fresh.
         self._live_sources: dict[str, Iterator[TelemetrySample]] = {}
 
+        # WDM schedule: sorted by t, processed in-order during step().
+        self._wdm_schedule: list[WDMScheduleEntry] = sorted(
+            wdm_schedule or [], key=lambda ev: ev.t
+        )
+        self._schedule_idx: int = 0
+
     # ------------------------------------------------------------------
     # Simulation control
     # ------------------------------------------------------------------
@@ -296,6 +343,16 @@ class TwinOrchestrator:
         """
         step_results: list[SimulationResult] = []
         dt_s = dt if dt is not None else self._config.dt_s
+
+        # Apply WDM schedule events due at the current time (§3.3 B1).
+        # Events fire when event.t <= self._t, before the link physics loop,
+        # so Raman/QBER reflect the new WDM state within the same step.
+        while self._schedule_idx < len(self._wdm_schedule):
+            ev = self._wdm_schedule[self._schedule_idx]
+            if ev.t > self._t:
+                break
+            self._apply_wdm_event(ev)
+            self._schedule_idx += 1
 
         # Ingest one live telemetry sample per link so the convolution window
         # stays current throughout the run and is_stale() never fires.
@@ -337,20 +394,33 @@ class TwinOrchestrator:
                 link_id=link.link_id,
                 node_id=link.source_node,
             )
-            self._aging_model.register_op(link.source_node, "channel", self._t)
+            # D = ∫u dt (whitepaper §6, Eq 18): u≈1 while the memory is
+            # in-service, so each step contributes dt_s of wear time.
+            self._aging_model.register_op(
+                link.source_node, "channel", self._t, op_duration_s=dt_s
+            )
 
             raman_rate = self._coexistence_engine.raman_rate(
                 link.link_id, link.lambda_q_nm, self._t
             )
             rhp = self._telemetry_engine.rhp_value(link.link_id)
 
-            # `fidelity` here is tracker.apply_channel's global purity Tr(ρ²)
-            # proxy (see its docstring), not a true Bell-state fidelity. The
-            # exact BB84 relation for a Werner state is QBER = (1-F)*2/3; we
-            # use the simpler QBER ≈ (1-F)/2 approximation, which is accurate
-            # for symmetric Pauli noise (px ≈ py) and avoids needing λx/λy
-            # individually. Treat qber as an order-of-magnitude estimate.
-            qber = min(max(0.0, (1.0 - fidelity) / 2.0), _QBER_MAX)
+            # Exact per-qubit BB84 QBER for a Pauli channel (Nielsen & Chuang
+            # §12 / GLLP).  For each basis:
+            #   QBER_Z = (1 − λz) / 2   (X or Y errors flip Z-basis bits)
+            #   QBER_X = (1 − λx) / 2   (Z or Y errors flip X-basis bits)
+            #   QBER   = (QBER_Z + QBER_X) / 2 = (2 − λx − λz) / 4
+            # λy does not enter QBER directly.
+            #
+            # QBER is scaled to τ_qubit (link.qubit_exposure_s), NOT to dt_s.
+            # For fly-by links τ_qubit = propagation delay L·n_g/c; repeater
+            # memory nodes override with the hold time.  dt-scaled eigenvalues
+            # (scaled_ptm) continue to drive state evolution and aging only.
+            # `fidelity` (= Tr(ρ²) from the tracker) is kept as a separate
+            # diagnostic for the fidelity plot; it does NOT drive QBER here.
+            _qber_eigs = _scale_ptm_eigenvalues(effective_ptm[1:], link.qubit_exposure_s)
+            lx_q, lz_q = float(_qber_eigs[0]), float(_qber_eigs[2])
+            qber = min(max(0.0, (2.0 - lx_q - lz_q) / 4.0), _QBER_MAX)
 
             kr = self._kr_calc.calculate(qber)
 
@@ -402,11 +472,37 @@ class TwinOrchestrator:
             self.step()
         return self.results()
 
+    def _apply_wdm_event(self, ev: WDMScheduleEntry) -> None:
+        """Dispatch a single WDM schedule event to the control plane.
+
+        Args:
+            ev: The schedule event to apply.
+        """
+        if ev.action == "activate":
+            spec = ClassicalChannelSpec(
+                channel_id=ev.channel_id,
+                lambda_c_nm=ev.lambda_c_nm,
+                launch_power_mw=ev.launch_power_mw,
+            )
+            self._control_plane.activate_channel(ev.link_id, spec)
+        elif ev.action == "deactivate":
+            self._control_plane.deactivate_channel(ev.link_id, ev.channel_id)
+        elif ev.action == "update_power":
+            self._control_plane.update_channel_power(
+                ev.link_id, ev.channel_id, ev.launch_power_mw
+            )
+        else:
+            _log.warning(
+                "Unknown WDM schedule action %r for link %r at t=%.3fs; skipped.",
+                ev.action, ev.link_id, ev.t,
+            )
+
     def reset(self) -> None:
         """Reset the simulation clock, result log, and quantum state."""
         self._t = 0.0
         self._results.clear()
         self._tracker.reset()
+        self._schedule_idx = 0
 
     def reconfigure(self, config: SimulationConfig) -> None:
         """Replace the static simulation configuration without resetting state.
@@ -463,6 +559,7 @@ class TwinOrchestrator:
         key_rate_params: KeyRateParams | None = None,
         node_aging_overrides: dict[str, dict[str, float]] | None = None,
         wdm_channels: list[ClassicalChannelSpec] | None = None,
+        wdm_schedule: list[WDMScheduleEntry] | None = None,
     ) -> TwinOrchestrator:
         """Build a fully-wired TwinOrchestrator with sensible defaults.
 
@@ -491,6 +588,8 @@ class TwinOrchestrator:
                 ``CoexistenceNoiseEngine`` at construction time.  Each entry is
                 passed to ``coexistence_engine.register_channel()``.  ``None``
                 leaves the engine with no classical channels (zero Raman noise).
+            wdm_schedule: Timed WDM channel events applied during ``step()``
+                (§3.3 B1).  Passed through to :class:`TwinOrchestrator`.
 
         Returns:
             A ready-to-step ``TwinOrchestrator``.
@@ -545,7 +644,7 @@ class TwinOrchestrator:
                 coexistence_engine.register_channel(_spec)
 
         aging_model = DeviceAgingModel(
-            t2_nominal=1.0, wear_const_nc=1e6, calib_drift_rate=1e-6
+            t2_nominal=1.0, wear_rate_kappa=1e-4, calib_drift_rate=1e-6
         )
         if node_aging_overrides:
             for _node_id, _params in node_aging_overrides.items():
@@ -568,6 +667,7 @@ class TwinOrchestrator:
             control_plane=control_plane,
             tracker=tracker,
             key_rate_params=key_rate_params,
+            wdm_schedule=wdm_schedule,
         )
 
         # Pre-warm the convolution window with 60s of *history before t=0*,

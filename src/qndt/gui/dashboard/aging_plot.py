@@ -1,12 +1,10 @@
 """AgingPlot: device aging -- coherence decay and gate overrotation (§5.5, §7.4).
 
-Two stacked plots per node: T2 degradation against cumulative op count
-(with the theoretical exponential wear curve overlaid), and gate
+Two stacked plots per node: T2 degradation against accumulated duty cycle D [s]
+(with the Matthiessen curve T2(D)=1/(1/T2_0+κD) overlaid), and gate
 overrotation ε(t) drift.
 """
 from __future__ import annotations
-
-import math
 
 import pyqtgraph as pg
 from PySide6.QtCore import Qt
@@ -42,7 +40,7 @@ class AgingPlot(QWidget):
 
         self._t2_plot = make_plot_widget(
             title="Coherence Time Degradation",
-            x_label="Cumulative ops N",
+            x_label="Accumulated duty cycle D [s]",
             y_label="T2 (s)",
         )
         self._overrotation_plot = make_plot_widget(
@@ -75,9 +73,9 @@ class AgingPlot(QWidget):
 
         self._t2_crosshair = CrosshairOverlay(
             self._t2_plot,
-            x_label="N",
+            x_label="D",
             y_label="T2",
-            x_fmt="{:.0f}",
+            x_fmt="{:.3f}",
             y_fmt="{:.4f}",
         )
         self._overrotation_crosshair = CrosshairOverlay(
@@ -95,28 +93,31 @@ class AgingPlot(QWidget):
         layout = QVBoxLayout(self)
         layout.addWidget(splitter)
 
-    def add_node(self, node_id: str, t2_nominal: float, wear_const_nc: float) -> None:
-        """Register a node and plot its theoretical exponential wear curve.
+    def add_node(self, node_id: str, t2_nominal: float, wear_rate_kappa: float) -> None:
+        """Register a node and plot its theoretical Matthiessen wear curve.
 
         Args:
             node_id: Node to track.
-            t2_nominal: Nominal (N=0) coherence time T2_0 [s].
-            wear_const_nc: Wear constant Nc (§5.5).
+            t2_nominal: Nominal (D=0) coherence time T2_0 [s].
+            wear_rate_kappa: Wear rate κ [s⁻²] (eq 18).
         """
         if node_id in self._t2_curves:
             return
         colour = _NODE_COLOURS[len(self._t2_curves) % len(_NODE_COLOURS)]
-        self._node_params[node_id] = (t2_nominal, wear_const_nc)
+        self._node_params[node_id] = (t2_nominal, wear_rate_kappa)
 
         self._t2_curves[node_id] = self._t2_plot.plot([], [], pen=make_pen(colour), name=node_id)
         self._t2_xs[node_id] = []
         self._t2_ys[node_id] = []
 
-        max_n = wear_const_nc * 5.0
-        ns = [max_n * i / (_THEORETICAL_CURVE_POINTS - 1) for i in range(_THEORETICAL_CURVE_POINTS)]
-        theoretical_t2 = [t2_nominal * math.exp(-n / wear_const_nc) for n in ns]
+        # Matthiessen theoretical curve: T2(D) = 1 / (1/T2_0 + κ·D)
+        max_d = (5.0 / wear_rate_kappa) if wear_rate_kappa > 0.0 else 1.0
+        ds = [max_d * i / (_THEORETICAL_CURVE_POINTS - 1) for i in range(_THEORETICAL_CURVE_POINTS)]
+        theoretical_t2 = [
+            1.0 / (1.0 / t2_nominal + wear_rate_kappa * d) for d in ds
+        ]
         self._theoretical_curves[node_id] = self._t2_plot.plot(
-            ns,
+            ds,
             theoretical_t2,
             pen=make_pen(
                 QUASAR_PLOT_THEME["foreground"], width=1, style=Qt.PenStyle.DashLine
@@ -132,21 +133,26 @@ class AgingPlot(QWidget):
         self._overrotation_crosshair.attach_series(node_id, self._overrotation_curves[node_id])
 
     def update_sample(
-        self, node_id: str, op_count: int, t2_current: float, overrotation: float, t: float
+        self,
+        node_id: str,
+        duty_cycle_s: float,
+        t2_current: float,
+        overrotation: float,
+        t: float,
     ) -> None:
         """Append a new aging sample for ``node_id``.
 
         Args:
             node_id: Node to update.
-            op_count: Cumulative operation count N.
-            t2_current: Current coherence time T2(N) [s].
+            duty_cycle_s: Accumulated duty cycle D [s].
+            t2_current: Current coherence time T2(D) [s].
             overrotation: Current gate overrotation ε(t).
             t: Simulation time [s].
         """
         if node_id not in self._t2_curves:
-            t2_nominal, wear_const_nc = self._node_params.get(node_id, (t2_current, 1.0))
-            self.add_node(node_id, t2_nominal, wear_const_nc)
-        rolling_append(self._t2_xs[node_id], self._t2_ys[node_id], float(op_count), t2_current)
+            t2_nominal, wear_rate_kappa = self._node_params.get(node_id, (t2_current, 0.0))
+            self.add_node(node_id, t2_nominal, wear_rate_kappa)
+        rolling_append(self._t2_xs[node_id], self._t2_ys[node_id], duty_cycle_s, t2_current)
         self._t2_curves[node_id].setData(self._t2_xs[node_id], self._t2_ys[node_id])
 
         rolling_append(

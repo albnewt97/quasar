@@ -173,21 +173,70 @@ Channel composition is **always** the Hadamard (element-wise) product of diagona
 R_eff = R_env ⊙ R_Raman ⊙ R_aging ⊙ R_idle
 ```
 
-This is exact for Pauli channels and O(1) regardless of contributor count. `ChannelComposer.effective_ptm()` is the only place this product is computed. No engine calls another engine's `ptm()` method directly.
+This is exact for Pauli channels and O(1) regardless of contributor count.
+`ChannelComposer.effective_ptm()` is the **only site where composition is orchestrated**:
+it calls each contributor's `ptm(ctx)` and delegates the element-wise algebra to
+`channels.compose_ptms()`.  `channels.compose_ptms()` is a reusable PTM algebra
+primitive (available to tests and future utilities), but it may only be *driven* from
+`effective_ptm()` in production code — never called directly by one engine on another's
+output.  No engine calls another engine's `ptm()` method directly.
 
 ### 3.3 Reference Graph (Allowed Inter-Engine Dependencies)
 
+The graph distinguishes two kinds of import:
+
+- **Runtime data edges** — an engine holds a reference to another engine and calls its
+  methods during the simulation loop.  These are the edges the law *constrains*.
+- **Assembly-time imports** — `TwinOrchestrator` is the assembly root; it necessarily
+  imports all concrete engine types in order to instantiate and wire them.  These are
+  *expected and documented* here, not constrained.
+
+**Runtime data edges (constrained set):**
+
 ```
-EnvironmentalTelemetryEngine    (no upstream deps)
-CoexistenceNoiseEngine     ──►  AsynchronousControlPlane  (reads WDM load only)
-DeviceAgingModel               (no upstream deps)
-AsynchronousControlPlane        (no upstream deps)
-TensorStateTracker              (no upstream deps)
-ChannelComposer            ──►  [all NoiseContributors]   (protocol only, no concrete types)
-TwinOrchestrator           ──►  ChannelComposer, TensorStateTracker, AsynchronousControlPlane
+EnvironmentalTelemetryEngine    (no runtime upstream deps)
+CoexistenceNoiseEngine     ──►  AsynchronousControlPlane  (runtime: raman_rate() calls
+                                  manages_link() + current_load() for live WDM channel set;
+                                  §3.3 B2: manages_link() used as live/static discriminant)
+DeviceAgingModel               (no runtime upstream deps)
+AsynchronousControlPlane        (no runtime upstream deps; activate_channel/deactivate_channel/
+                                  update_channel_power typed Any to avoid reverse-direction import)
+TensorStateTracker              (no runtime upstream deps)
+ChannelComposer            ──►  [all NoiseContributors]   (via Protocol; no concrete-type imports)
 ```
 
-No other dependency edges exist. The GUI layer (`qndt.gui.*`) may import anything from `qndt.*`. Nothing in `qndt.*` (outside `gui/`) may import from `qndt.gui.*`.
+**WDM load schedule (§3.3 B1):**
+
+`TwinOrchestrator.step()` applies any due `WDMScheduleEntry` events before the link physics
+loop.  Events are sorted by `t` at construction; fired when `self._t >= event.t`.  Each
+event calls the appropriate delegation method on `AsynchronousControlPlane`, which forwards
+to `WDMLoadTracker`.  The schedule is supplied via `ScenarioConfig.wdm_schedule` (a list of
+`WDMScheduleEventModel`) or directly via `TwinOrchestrator.build_simple(wdm_schedule=...)`.
+
+**B2 fallback rule:**
+
+A fiber link is owned by **either** static `register_channel()` **or** the CP schedule —
+not both.  Once any schedule event activates a link, `manages_link(link_id)` returns `True`
+for the lifetime of the tracker, and `raman_rate()` uses the live (possibly empty) path
+exclusively, ignoring any static channels.  Mixing static and scheduled channels on the same
+link produces unmanaged semantics only until the first `activate` call.
+
+No engine-to-engine runtime data edge other than the above may exist.
+
+**Assembly-time imports (TwinOrchestrator only):**
+
+`TwinOrchestrator` is the simulation assembly root.  It imports — at module level, to
+instantiate and register — every concrete engine type:
+
+```
+TwinOrchestrator  ──►  ChannelComposer, TensorStateTracker, AsynchronousControlPlane
+                  ──►  EnvironmentalTelemetryEngine, CoexistenceNoiseEngine, DeviceAgingModel
+                  ──►  (value-objects/utilities: WDMLoadTracker, NetworkGraph,
+                         BB84KeyRateCalculator, MemoryKernel, SyntheticTelemetrySource, …)
+```
+
+The GUI layer (`qndt.gui.*`) may import anything from `qndt.*`. Nothing in `qndt.*`
+(outside `gui/`) may import from `qndt.gui.*`.
 
 ### 3.4 State Ownership Law
 
@@ -310,11 +359,32 @@ Illustrative default values live in `src/qndt/telemetry/calibration.py`. These a
 
 ### 5.4 Raman Dark Count Probability (per gate)
 
+The SpRS cross-section uses a frequency-offset profile ρ(Δν) calibrated to the silica Raman
+gain spectrum (whitepaper eq 16; Agrawal NLFO Fig. 8.1; Eraerds 2010 calibration anchor):
+
 ```
-P_fwd(λq, t) = Pc(t) · β(λc, λq) · Δλq · L · exp(-αL)
-P_bwd(λq, t) = Pc(t) · β(λc, λq) · Δλq · (1 - exp(-2αL)) / (2α)
+Δν           = ν_cl − ν_q  [Hz]   (> 0 Stokes, < 0 anti-Stokes)
+ρ(Δν)        = ρ_peak · g(|Δν|) · A(Δν, T)
+
+g(|Δν|)      normalised silica Raman gain shape; peak ≈ 13.2 THz, falls to 0 at ~45 THz
+A(Δν, T)     Stokes: n(|Δν|, T) + 1;  anti-Stokes: n(|Δν|, T)
+n(|Δν|, T)   1 / (exp(h|Δν| / kT) − 1)   [Bose–Einstein]
+ρ_peak       ≈ 1.19×10⁻⁹ 1/(km·nm)   [calibrated to Eraerds β(1310→1550) = 4×10⁻¹¹]
+
+P_fwd(λq, t) = Pc(t) · ρ(Δν) · Δλq · L · exp(-αL)
+P_bwd(λq, t) = Pc(t) · ρ(Δν) · Δλq · (1 - exp(-2αL)) / (2α)
 
 r_Raman_tot(t) = Σ_{c ∈ active(t)}  (P_fwd + P_bwd) · η_det · T_opt / (h·νq)
+
+active(t)  = channel source selected by manages_link() (§3.3 B2 semantics):
+             • CP-managed path (manages_link(link_id) → True):
+               AsynchronousControlPlane.current_load(link_id, t).active_channels
+               Empty list means all channels off → rate = 0.  No static fallback.
+             • Static path (manages_link → False, i.e., link never activated in CP):
+               CoexistenceNoiseEngine._channels (populated via register_channel()).
+             Rule: a link is owned by static register_channel OR the CP schedule,
+             not both.  Once any schedule event activates a link, CP-managed semantics
+             apply for the lifetime of that WDMLoadTracker instance.
 
 p_click_noise(t) = p_dc + (1 - exp(-r_Raman_tot · τ_gate))
                  ≈ p_dc + r_Raman_tot · τ_gate   [for small argument]
@@ -322,10 +392,15 @@ p_click_noise(t) = p_dc + (1 - exp(-r_Raman_tot · τ_gate))
 
 ### 5.5 Device Aging
 
+Matthiessen's rule applied to the decoherence rate (whitepaper eq 18); rate-additivity
+of independent dephasing channels — Nielsen & Chuang (2010), Ch. 8.  The κD term is a
+calibrated phenomenological wear coefficient, not a derived constant.
+
 ```
-T2(N) = T2_0 · exp(-N / Nc)          [N = cumulative op count, Nc = wear constant]
-ε(t)  = ε_0 + κ · t                  [gate overrotation drift]
-pz_idle = 0.5 · (1 - exp(-t_idle / T2(N)))
+1/T2(D) = 1/T2_0 + κ·D               [Matthiessen rule, eq 18; D = Σ Δt_op [s], κ [s⁻²]]
+ε(t)    = ε_0 + κ_drift·t            [gate overrotation drift; κ_drift [rad/s] ≠ κ]
+pz_idle = 0.5 · (1 - exp(-t_idle / T2(D)))
+T2 ≤ 2·T1                            [enforced: 1/T2=1/(2T1)+1/Tφ, Tφ≥0; equality = pure-T1 limit]
 ```
 
 ### 5.6 RHP Non-Markovianity Witness
@@ -335,6 +410,43 @@ N_RHP = ∫_{γk(t) < 0} |γk(t)| dt
 ```
 
 Computed online. A positive value means information backflow is occurring on this link. Surfaced in `NonMarkovPlot` with sign-change markers.
+
+### 5.7 BB84 QBER (exact Pauli channel)
+
+For a Pauli channel with diagonal PTM `[1, λx, λy, λz]`, the per-qubit BB84 QBER is exact
+(Nielsen & Chuang §12 / GLLP):
+
+```
+QBER_Z = (1 − λz) / 2     Z-basis: X or Y error flips the bit
+QBER_X = (1 − λx) / 2     X-basis: Z or Y error flips the bit
+QBER   = (QBER_Z + QBER_X) / 2 = (2 − λx − λz) / 4
+```
+
+`λy` does not enter QBER directly (Y errors contribute equally to Z- and X-basis errors,
+captured already by the λx and λz terms).
+
+**Physical exposure time `τ_qubit`.**  `TwinOrchestrator.step()` computes QBER from the
+composed effective PTM eigenvalues scaled to the per-qubit physical exposure time `τ_qubit`
+(`LinkConfig.qubit_exposure_s`) — **not** to the numerical timestep `dt_s`.  QBER is therefore
+dt-invariant: `QBER(dt) = QBER(dt/2)` to machine precision for a Markovian channel.
+
+The dt-scaled eigenvalues (`scaled_ptm`) continue to drive `TensorStateTracker.apply_channel`
+(state evolution) and the aging duty-cycle accumulator `D = ∫u dt`.  Only the QBER estimate
+uses the τ_qubit scale.
+
+**`τ_qubit` regimes**
+
+| Regime | `qubit_exposure_s` | Physical meaning | QBER aging sensitivity |
+|---|---|---|---|
+| Fly-by / point-to-point | propagation delay `L·n_g/c` | Time for a photon to traverse the fiber | Weak (τ_qubit ≪ T₂) |
+| Quantum memory / repeater | memory hold time | Time the qubit is stored before measurement | Strong (τ_qubit ~ T₂) |
+
+**Default**: `qubit_exposure_s` is omitted from the scenario JSON → propagation delay
+`L·n_g/c` with `n_g = 1.468` (SMF-28 at 1550 nm) and `c = 2.998×10⁸ m/s`.  Override
+per-link in the scenario JSON for memory-node scenarios.
+
+`fidelity` (= global state purity `Tr(ρ²)` returned by `TensorStateTracker.apply_channel`) is
+reported as a separate diagnostic for the FidelityPlot and does **not** drive the QBER calculation.
 
 ---
 
@@ -346,7 +458,7 @@ These are the five structural novelties. Every implementation decision preserves
 |---|---------|--------------------|--------------------|
 | 1 | **Non-Markovian telemetry** | Static depolarising rate set at init | Memory-kernel convolution over live env stream; online RHP witness |
 | 2 | **Co-existence engine** | Quantum channel simulated in isolation | SpRS Raman cross-talk from classical WDM channels → dark count rate → PTM contribution |
-| 3 | **Device aging** | Fixed T2/gate fidelity | T2 degrades with cumulative ops via exponential wear; gate overrotation drifts |
+| 3 | **Device aging** | Fixed T2/gate fidelity | T2 degrades with accumulated duty cycle via Matthiessen's rule (eq 18); gate overrotation drifts |
 | 4 | **Classical↔quantum coupling** | Ideal control plane, free of cost | Classical congestion/jitter → `induced_idle` → T2 dephasing AND higher Raman noise |
 | 5 | **Tensor-network backend** | Dense 2^{2n} global density matrix | MPDO/LPDO with χ_max, κ_max truncation; bond dims reported as QoS signal |
 
@@ -392,7 +504,7 @@ This means parameter changes take effect at the next quantum event, not mid-oper
 | `FidelityPlot` | Sim time [s] | Process fidelity [0–1] per node | Every memory op | Shaded region: F < 0.5 (below classical) |
 | `RamanPlot` | Sim time [s] | Dark count rate [Hz] | Every WDM change | Overlaid: intrinsic dark count baseline |
 | `NonMarkovPlot` | Sim time [s] | RHP witness value | Continuous | Sign-change markers; negative = backflow |
-| `AgingPlot` | Cumulative ops [N] | T2 [s] per node | Every register_op | Exponential fit overlay |
+| `AgingPlot` | Accumulated duty cycle D [s] | T2 [s] per node | Every register_op | Matthiessen curve overlay T2(D)=1/(1/T2_0+κD) |
 | `NetworkHeatmap` | Topology graph | Link colour = live fidelity | 1 Hz refresh | Exported as PNG on demand |
 
 ### 7.5 Telemetry Viewer
@@ -527,7 +639,7 @@ When saving/loading a simulation scenario:
   "scenario_name": "Tokyo-Osaka Backbone",
   "nodes": [
     {"id": "tokyo_repeater_1", "type": "memory_node",
-     "t2_nominal": 1.0, "wear_const_Nc": 1e6, "calib_drift_rate": 1e-6}
+     "t2_nominal": 1.0, "wear_rate_kappa": 1e-4, "calib_drift_rate": 1e-6}
   ],
   "links": [
     {"id": "link_01", "source": "tokyo_repeater_1", "dest": "osaka_bsm_1",

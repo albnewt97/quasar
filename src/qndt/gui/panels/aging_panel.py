@@ -1,7 +1,7 @@
 """AgingPanel: device aging and calibration drift configuration (§7.3).
 
-Drives ``DeviceAgingModel`` (§5.5): T2 wear curve, gate overrotation drift,
-and the live per-node operational status table.
+Drives ``DeviceAgingModel`` (§5.5): T2 Matthiessen wear curve, gate overrotation
+drift, and the live per-node operational status table.
 """
 from __future__ import annotations
 
@@ -34,14 +34,14 @@ class AgingConfigModel(BaseModel):
     """Validated device aging and calibration drift configuration.
 
     Args:
-        t2_nominal: Initial T2 coherence time at zero operations [s].
-        wear_const_nc: Characteristic operation count for 1/e T2 decay.
-        drift_rate_kappa: Gate overrotation drift rate [rad/s].
+        t2_nominal: Initial T2 coherence time at zero duty cycle [s].
+        wear_rate_kappa: Matthiessen wear rate κ [s⁻²]; 0 means no wear.
+        drift_rate_kappa: Gate overrotation drift rate κ_drift [rad/s].
         epsilon_0: Initial gate overrotation [rad].
     """
 
     t2_nominal: float = Field(default=1.0, ge=1e-6, le=100.0)
-    wear_const_nc: float = Field(default=1e6, ge=1e3, le=1e9)
+    wear_rate_kappa: float = Field(default=1e-4, ge=0.0, le=10.0)
     drift_rate_kappa: float = Field(default=1e-6, ge=0.0, le=1e-3)
     epsilon_0: float = Field(default=0.0, ge=-0.1, le=0.1)
 
@@ -60,11 +60,11 @@ class AgingPanel(BasePanel):
         self._t2_nominal.setValue(1.0)
         self._layout.addLayout(self._make_field_row("T₂ nominal", self._t2_nominal, "s"))
 
-        self._wear_const_nc = _ScientificDoubleSpinBox()
-        self._wear_const_nc.setRange(1e3, 1e9)
-        self._wear_const_nc.setValue(1e6)
+        self._wear_rate_kappa = _ScientificDoubleSpinBox()
+        self._wear_rate_kappa.setRange(0.0, 10.0)
+        self._wear_rate_kappa.setValue(1e-4)
         self._layout.addLayout(
-            self._make_field_row("Wear const Nc", self._wear_const_nc, "ops")
+            self._make_field_row("κ", self._wear_rate_kappa, "s⁻²")
         )
 
         self._layout.addWidget(self._make_section_label("Calibration Drift"))
@@ -147,7 +147,7 @@ class AgingPanel(BasePanel):
         """Return the panel's current aging configuration."""
         return {
             "t2_nominal": self._t2_nominal.value(),
-            "wear_const_nc": self._wear_const_nc.value(),
+            "wear_rate_kappa": self._wear_rate_kappa.value(),
             "drift_rate_kappa": self._drift_rate.value(),
             "epsilon_0": self._epsilon_0.value(),
         }

@@ -84,6 +84,25 @@ class WDMLoadTracker:
             )
         self._power_overrides.setdefault(link_id, {})[channel_id] = power_mw
 
+    def manages_link(self, link_id: str) -> bool:
+        """Return True if this link has ever been activated in the tracker.
+
+        Used by :class:`~qndt.physics.raman.CoexistenceNoiseEngine` to
+        distinguish between "CP-managed, all channels off" (live path → rate 0)
+        and "unmanaged, use static dict" (static path).
+
+        Once a link is activated the key persists in ``_active`` even after all
+        channels are deactivated, so ``manages_link`` remains True for the
+        lifetime of the tracker.
+
+        Args:
+            link_id: Fiber link identifier.
+
+        Returns:
+            ``True`` if ``link_id`` was ever activated; ``False`` otherwise.
+        """
+        return link_id in self._active
+
     def current_load(self, link_id: str, t: float) -> ClassicalLoad:
         """Build a ``ClassicalLoad`` snapshot for a link at time ``t``.
 

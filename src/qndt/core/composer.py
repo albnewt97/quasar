@@ -6,6 +6,7 @@ from typing import Protocol, runtime_checkable
 import numpy as np
 
 from qndt.core.context import OpContext
+from qndt.physics.channels import compose_ptms
 
 
 @runtime_checkable
@@ -57,9 +58,14 @@ class ChannelComposer:
     def effective_ptm(self, ctx: OpContext) -> np.ndarray:
         """Return the Hadamard product of all registered contributors' PTMs.
 
-        Iterates contributors in registration order, multiplying element-wise
-        into an accumulator initialised to ``np.ones(4)``.  An empty composer
-        returns the identity PTM.
+        This is the single *orchestration site* for channel composition (§3.2):
+        it collects each contributor's ``ptm(ctx)`` and delegates the element-wise
+        algebra to ``channels.compose_ptms()``.  An empty composer returns the
+        identity PTM ``[1, 1, 1, 1]``.
+
+        The math lives in ``channels.compose_ptms()`` so the algebra is reusable
+        (e.g. in tests); the *law* constrains only where composition is **driven**
+        (here, and nowhere else in production code).
 
         Args:
             ctx: Operation context forwarded unchanged to every contributor.
@@ -67,7 +73,4 @@ class ChannelComposer:
         Returns:
             Length-4 numpy array ``[1, λx_eff, λy_eff, λz_eff]``.
         """
-        result = np.ones(4, dtype=np.float64)
-        for contributor in self._contributors:
-            result = result * contributor.ptm(ctx)
-        return result
+        return compose_ptms(*[c.ptm(ctx) for c in self._contributors])

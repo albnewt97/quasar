@@ -46,11 +46,30 @@ class KeyRateParams:
         f_ec: Error correction inefficiency.  f=1.0 is the Shannon limit;
             f=1.16 is realistic for CASCADE/LDPC.  Must be >= 1.0.
         detector_efficiency: Single-photon detector efficiency η_d in (0, 1].
-        dark_count_rate: Per-gate dark count probability p_dc in (0, 1).
+        dark_count_rate: **Per-detector** dark count probability p_dc in (0, 1).
+            For a **dual-detector** BB84 receiver (one detector per Z/X basis
+            arm) the total background yield Y₀ = 2·p_dc + p_R, where the
+            factor of 2 comes from two independent dark-count processes and
+            p_R is the Raman false-click probability from
+            ``CoexistenceNoiseEngine``.  This field stores the single-detector
+            p_dc; the dual-detector factor is accounted for in the QBER that
+            the simulation layer passes into ``calculate()``.
         repetition_rate_hz: Clock rate of the QKD system [Hz].  Used to
             convert per-pulse rate to bits/second.
         protocol: Security analysis model.  One of ``"bb84"`` (standard
             GLLP) or ``"bb84_decoy"`` (with decoy-state yield estimation).
+
+    Notes:
+        **Encoding-agnostic QBER**: ``calculate()`` takes an observed QBER
+        derived from the Z/X-basis Pauli eigenvalues ``(2 − λx − λz) / 4``
+        (§5.7 in ``docs/architecture.md``).  This formula is identical for
+        polarization-encoded and phase-encoded BB84 because both reduce to a
+        Pauli channel under an appropriate frame.  Polarization-vs-phase
+        encoding is an **open modeling choice**: no physics change in the
+        simulation is gated on that decision.  The ``e₀ = ½`` random-bit
+        model assumed for dark counts (including Raman false clicks) is
+        encoding-agnostic and consistent with the depolarising PTM used by
+        ``CoexistenceNoiseEngine``.
 
     Raises:
         ValueError: If any field violates its domain constraint.

@@ -1,14 +1,14 @@
 """CoexistencePanel: WDM classical channel coexistence configuration (§7.3).
 
 Drives ``CoexistenceNoiseEngine`` (§3.3) with the list of active classical
-channels and exposes the live Raman noise floor during simulation.
+channels and the Raman profile parameters (ρ_peak, T).
 """
 from __future__ import annotations
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QComboBox,
+    QDoubleSpinBox,
     QHBoxLayout,
     QLabel,
     QProgressBar,
@@ -23,15 +23,23 @@ from qndt.gui.panels.base_panel import BasePanel
 _COLUMNS = ("Channel ID", "λ_c (nm)", "Power (mW)", "Active")
 _MIN_ROWS = 5
 
+# Calibrated ρ_peak from smf28_default() (displayed as default in spinbox)
+_RHO_PEAK_DEFAULT: float = 1.19e-9   # 1/(km·nm)
+_T_DEFAULT_K: float = 300.0          # K
+
 
 class CoexistenceConfigModel(BaseModel):
     """Validated coexistence configuration payload.
 
     Args:
         channels: Active classical WDM channels.
+        rho_peak: Raman cross-section peak ρ_peak in 1/(km·nm).
+        temperature_k: Fiber temperature for Bose–Einstein factor in K.
     """
 
     channels: list[dict[str, object]]
+    rho_peak: float = Field(gt=0.0, default=_RHO_PEAK_DEFAULT)
+    temperature_k: float = Field(gt=0.0, default=_T_DEFAULT_K)
 
 
 class CoexistencePanel(BasePanel):
@@ -60,13 +68,45 @@ class CoexistencePanel(BasePanel):
         button_row.addWidget(self._remove_button)
         self._layout.addLayout(button_row)
 
-        self._layout.addWidget(self._make_section_label("Raman Profile"))
-        self._raman_profile = QComboBox()
-        self._raman_profile.addItems(["SMF-28 Default", "Custom (from file)"])
+        # ── Raman profile parameters ─────────────────────────────────────
+        # ρ(Δν) = ρ_peak · g(|Δν|) · A(Δν, T)  [whitepaper eq 16]
+        self._layout.addWidget(self._make_section_label("Raman Profile (eq 16)"))
+
+        self._rho_peak_spin = QDoubleSpinBox()
+        self._rho_peak_spin.setDecimals(3)
+        self._rho_peak_spin.setRange(1e-12, 1e-6)
+        self._rho_peak_spin.setSingleStep(1e-11)
+        self._rho_peak_spin.setValue(_RHO_PEAK_DEFAULT)
+        self._rho_peak_spin.setToolTip(
+            "ρ_peak: absolute scale of the silica Raman cross-section profile.\n"
+            "Calibrated so β(1310→1550 nm) = 4×10⁻¹¹ 1/(km·nm) [Eraerds 2010]."
+        )
         self._layout.addLayout(
-            self._make_field_row("Profile", self._raman_profile, "")
+            self._make_field_row("ρ_peak", self._rho_peak_spin, "1/(km·nm)")
         )
 
+        self._temp_spin = QDoubleSpinBox()
+        self._temp_spin.setDecimals(1)
+        self._temp_spin.setRange(77.0, 1000.0)
+        self._temp_spin.setSingleStep(10.0)
+        self._temp_spin.setValue(_T_DEFAULT_K)
+        self._temp_spin.setToolTip(
+            "Fiber temperature T [K] used for the Bose–Einstein asymmetry factor\n"
+            "A(Δν,T): Stokes ∝ (n+1), anti-Stokes ∝ n where n=1/(exp(hΔν/kT)−1)."
+        )
+        self._layout.addLayout(
+            self._make_field_row("Temperature", self._temp_spin, "K")
+        )
+
+        # Read-only preview: computed ρ at the Eraerds calibration point
+        self._rho_preview_label = QLabel("")
+        self._layout.addWidget(self._rho_preview_label)
+
+        self._rho_peak_spin.valueChanged.connect(self._on_profile_changed)
+        self._temp_spin.valueChanged.connect(self._on_profile_changed)
+        self._on_profile_changed()  # populate preview
+
+        # ── Live Raman rate ───────────────────────────────────────────────
         self._layout.addWidget(self._make_section_label("Live Raman Rate"))
         self._rate_label = QLabel("--- Hz")
         self._layout.addWidget(self._rate_label)
@@ -175,11 +215,25 @@ class CoexistencePanel(BasePanel):
             f"QProgressBar::chunk {{ background-color: {colour}; }}"
         )
 
+    def _on_profile_changed(self) -> None:
+        """Update the ρ(Δν) preview label and emit config."""
+        rho_peak = self._rho_peak_spin.value()
+        self._rho_preview_label.setText(
+            f"ρ(35.4 THz, 1310→1550 nm) = {rho_peak * 0.0341:.2e} 1/(km·nm)"
+            "  [preview at calibration offset]"
+        )
+        self._emit_config()
+
     def _on_table_changed(self, _item: QTableWidgetItem | None) -> None:
-        # config_changed is typed (str, dict); wrap the channel list so PySide6
-        # doesn't silently drop it during the list->dict C++ marshalling.
-        self.config_changed.emit("coexistence", {"channels": self.get_channels()})
+        self._emit_config()
+
+    def _emit_config(self) -> None:
+        self.config_changed.emit("coexistence", self.get_config())
 
     def get_config(self) -> dict[str, object]:
         """Return the panel's current coexistence configuration."""
-        return {"channels": self.get_channels()}
+        return {
+            "channels": self.get_channels(),
+            "rho_peak": self._rho_peak_spin.value(),
+            "temperature_k": self._temp_spin.value(),
+        }

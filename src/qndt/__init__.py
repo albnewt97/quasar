@@ -59,7 +59,7 @@ from qndt.telemetry.sources import (
     TelemetrySource,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     # core

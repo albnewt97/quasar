@@ -1,6 +1,6 @@
 [project]
 name = "qndt"
-version = "0.1.0"
+version = "0.2.0"
 requires-python = ">=3.10"
 dependencies = [
     "numpy==2.2.6",
@@ -51,6 +51,7 @@ select = ["E", "F", "I"]
 [tool.pytest.ini_options]
 markers = [
     "physics_regression: marks physics analytic-limit regression tests",
+    "architecture: static §3 architecture-law conformance tests (AST + import analysis)",
 ]
 
 [tool.mypy]
